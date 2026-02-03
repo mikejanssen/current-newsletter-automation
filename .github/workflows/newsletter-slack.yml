@@ -8,7 +8,7 @@ on:
     - cron: "0 15 * * 1,4"
   workflow_dispatch:
     inputs:
-      since:
+      since: 2026-01-29T14
         description: "Optional override start time (ISO 8601 with timezone)"
         required: false
         type: string
