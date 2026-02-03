@@ -1,0 +1,95 @@
+name: Newsletter HTML to Slack
+
+on:
+  schedule:
+    # GitHub cron is UTC. We schedule both 14:00 and 15:00 UTC,
+    # then gate to 10:00 America/New_York to handle DST.
+    - cron: "0 14 * * 1,4"
+    - cron: "0 15 * * 1,4"
+  workflow_dispatch:
+    inputs:
+      since:
+        description: "Optional override start time (ISO 8601 with timezone)"
+        required: false
+        type: string
+      skip_slack:
+        description: "Generate file only (no Slack upload)"
+        required: false
+        default: false
+        type: boolean
+
+jobs:
+  newsletter:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Decide run window
+        id: window
+        shell: bash
+        run: |
+          python - <<'PY'
+          import datetime as dt
+          import os
+          from zoneinfo import ZoneInfo
+
+          event = os.environ.get("GITHUB_EVENT_NAME", "")
+          tz = ZoneInfo("America/New_York")
+          now_et = dt.datetime.now(dt.timezone.utc).astimezone(tz)
+
+          should_run = True
+          if event == "schedule":
+              should_run = (now_et.weekday() in (0, 3) and now_et.hour == 10)
+
+          if now_et.weekday() == 0:  # Monday
+              since_et = (now_et - dt.timedelta(days=4)).replace(hour=10, minute=0, second=0, microsecond=0)
+          elif now_et.weekday() == 3:  # Thursday
+              since_et = (now_et - dt.timedelta(days=3)).replace(hour=10, minute=0, second=0, microsecond=0)
+          else:
+              since_et = (now_et - dt.timedelta(days=4)).replace(hour=10, minute=0, second=0, microsecond=0)
+
+          with open(os.environ["GITHUB_OUTPUT"], "a", encoding="utf-8") as f:
+              f.write(f"should_run={'true' if should_run else 'false'}\n")
+              f.write(f"auto_since={since_et.isoformat()}\n")
+          PY
+
+      - name: Run newsletter generator
+        if: github.event_name == 'workflow_dispatch' || steps.window.outputs.should_run == 'true'
+        env:
+          WORDPRESS_SITE_URL: ${{ secrets.WORDPRESS_SITE_URL }}
+          PARSELY_API_KEY: ${{ secrets.PARSELY_API_KEY }}
+          PARSELY_API_SECRET: ${{ secrets.PARSELY_API_SECRET }}
+          SLACK_BOT_TOKEN: ${{ secrets.SLACK_BOT_TOKEN }}
+          SLACK_CHANNEL_ID: ${{ secrets.SLACK_CHANNEL_ID }}
+          NEWSLETTER_TIMEZONE: America/New_York
+          NEWSLETTER_OUTPUT_DIR: projects/newsletter/output
+          NEWSLETTER_STATE_FILE: projects/newsletter/output/newsletter-state.json
+        shell: bash
+        run: |
+          args=()
+          if [ -n "${{ inputs.since }}" ]; then
+            args+=(--since "${{ inputs.since }}")
+          else
+            args+=(--since "${{ steps.window.outputs.auto_since }}")
+          fi
+          if [ "${{ inputs.skip_slack }}" = "true" ]; then
+            args+=(--skip-slack)
+          fi
+          python projects/newsletter/generate-newsletter-slack.py "${args[@]}"
+
+      - name: Upload generated HTML artifact
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: newsletter-html
+          path: projects/newsletter/output/*.html
+          if-no-files-found: ignore

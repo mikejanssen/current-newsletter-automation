@@ -1,0 +1,9 @@
+**/.env
+__pycache__/
+*.py[cod]
+.DS_Store
+projects/newsletter/output/*.html
+projects/newsletter/output/*.log
+projects/newsletter/output/newsletter-state.json
+projects/newsletter/output/monthly-pageviews-*.txt
+**/.env
