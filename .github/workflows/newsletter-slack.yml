@@ -51,11 +51,11 @@ jobs:
               should_run = (now_et.weekday() in (0, 3) and now_et.hour == 10)
 
           if now_et.weekday() == 0:  # Monday
-              since_et = (now_et - dt.timedelta(days=4)).replace(hour=10, minute=0, second=0, microsecond=0)
+              since_et = (now_et - dt.timedelta(days=4)).replace(hour=14, minute=0, second=0, microsecond=0)
           elif now_et.weekday() == 3:  # Thursday
-              since_et = (now_et - dt.timedelta(days=3)).replace(hour=10, minute=0, second=0, microsecond=0)
+              since_et = (now_et - dt.timedelta(days=3)).replace(hour=14, minute=0, second=0, microsecond=0)
           else:
-              since_et = (now_et - dt.timedelta(days=4)).replace(hour=10, minute=0, second=0, microsecond=0)
+              since_et = (now_et - dt.timedelta(days=4)).replace(hour=14, minute=0, second=0, microsecond=0)
 
           with open(os.environ["GITHUB_OUTPUT"], "a", encoding="utf-8") as f:
               f.write(f"should_run={'true' if should_run else 'false'}\n")
