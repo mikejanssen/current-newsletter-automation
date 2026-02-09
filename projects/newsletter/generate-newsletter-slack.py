@@ -211,51 +211,6 @@ def build_items(posts, metrics):
     return items
 
 
-def clamp_words(text, max_words):
-    words = [w for w in text.split() if w]
-    return " ".join(words[:max_words]).strip()
-
-
-def subject_suggestions(headline):
-    clean = smarten_punctuation(strip_html(headline))
-    clean = re.sub(r"[^\w\s’$.-]", "", clean).strip()
-    base4 = clamp_words(clean, 4)
-    base5 = clamp_words(clean, 5)
-    base6 = clamp_words(clean, 6)
-    candidates = [
-        base6,
-        f"{base5} what to know",
-        f"{base5} latest",
-        f"{base5} in focus",
-        f"{base5} explained",
-        f"{base5} key takeaways",
-        f"{base5} why it matters",
-        f"{base5} public media update",
-        f"{base4} quick briefing",
-        f"{base5} top story",
-        f"{base5} this week",
-        f"{base5} new details",
-    ]
-
-    out = []
-    seen = set()
-    for c in candidates:
-        c = re.sub(r"\s+", " ", c).strip()
-        c = clamp_words(c, 8)
-        if not c:
-            continue
-        low = c.lower()
-        if ":" in c or low in seen:
-            continue
-        seen.add(low)
-        out.append(c)
-        if len(out) == 10:
-            break
-    while len(out) < 10:
-        out.append(f"{base4} update {len(out)+1}")
-    return out
-
-
 def build_item_html(item, square_index):
     img_html = ""
     if item["image"]:
@@ -302,12 +257,6 @@ def build_item_html(item, square_index):
 def build_output_html(items, since_dt, now_dt):
     square_count = 0
     lines = []
-    lead = items[0]
-    subjects = subject_suggestions(lead["title"])
-    lines.append("<!-- Suggested subject lines for Item 1 (max 8 words each) -->")
-    for idx, sub in enumerate(subjects, start=1):
-        lines.append(f"<!-- {idx}. {html.escape(sub)} -->")
-    lines.append("")
     lines.append(
         "<!-- Newsletter item snippets (ordered by Parse.ly returning visitors) -->"
     )
@@ -473,7 +422,7 @@ def main():
 
     if not args.skip_slack:
         comment = (
-            f"Newsletter HTML + subject lines ({since_dt.astimezone(ZoneInfo(timezone_name)).strftime('%b %d %I:%M %p %Z')} "
+            f"Newsletter HTML ({since_dt.astimezone(ZoneInfo(timezone_name)).strftime('%b %d %I:%M %p %Z')} "
             f"to {now_dt.astimezone(ZoneInfo(timezone_name)).strftime('%b %d %I:%M %p %Z')})"
         )
         slack_upload_html(slack_token, slack_channel_id, out_file, initial_comment=comment)
