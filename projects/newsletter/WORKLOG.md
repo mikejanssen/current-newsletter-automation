@@ -43,3 +43,4 @@
 - Added newsletter automation env vars to `projects/newsletter/.env.example`.
 - Added GitHub Actions workflow `.github/workflows/newsletter-slack.yml` for cloud scheduling (Mon/Thu 10:00 AM ET).
 - Added setup guide `projects/newsletter/GITHUB_ACTIONS_SETUP.md`.
+- Added Slack slash-command prototype in `projects/newsletter-slack-command/` for on-demand single-post HTML (`/newsletter-html <url>`).

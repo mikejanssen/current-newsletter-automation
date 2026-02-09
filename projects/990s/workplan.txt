@@ -1,0 +1,31 @@
+I want to create a tool that will check on a weekly basis for new 990 forms filed by the nonprofit organizations that operate public broadcasting stations. It will deliver the 990 to a Slack channel either as a file or a link to a 990, depending on how we source the 990s. It will also analyze each 990 form and check for information that may be worth following up on with journalistic reporting. This analysis will be delivered to the Slack channel along with the new 990 form.
+
+I have created a new folder, /projects/990s/, for this project.
+
+To do this I think we'll need a list of all the nonprofits that operate stations. The folder I created contains cpb-grantees.csv, a CSV file of all public broadcasters that formerly received CPB funding. The name of the nonprofit is in the "Licensee Name" column. Many of them are colleges and universities. These stations will not have 990s because they are part of larger institutions, so we don't need to worry about them.
+
+For each 990 found, the tool should 
+
+- Total revenue (Part I, Line 12) — change from prior to current year (both are on same 990)
+- Total expenses (Part I, Line 18) — change from prior to current year (both are on same 990) 
+- Revenue less expenses (Part 1, Line 19)
+- Total liabilities (Part I, Line 21)
+- Net assets at year-end (Part I, Line 22)
+- Unusual revenue sources (Part VIII, Line 7a)
+- Fundraising efficiency (Total contributions on Part VIII, line 1h divided by total functional expenses)
+- Loans to/from officers (Schedule L, Part II & V)
+- Related-party transactions (Schedule L, Part IV) 
+- Schedule O: mentions of Part XII, Line 1 (change in accounting method) and Part III, Line 3 (major program change)
+
+Ideally, the tool would also make comparisons to the organization's previous 990:
+
+- Public support percentage (Schedule A, Part II or III) — Part II, line 1, has five years of data. Maybe this could be made into a chart.
+- Contributions & - grants (Part VIII, Line 1h)
+— Drops in major donations or CPB grants could signal trouble.
+- Program service revenue (Part VIII, Line 2g)
+- Salaries & benefits (Part IX, Line 7) 
+- Top-paid employees (Schedule J, Part II)
+
+I would also like this tool to be freestanding, in that you could go to it and give it a 990 at any time and it will provide this analysis.
+
+If you think it would be easier to do that first and then figure out the process of finding the 990s on an automated basis and delivering the results to the Slack channel later, I'm OK with that.
