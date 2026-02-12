@@ -160,17 +160,97 @@ def fetch_parsely_metrics(api_key, api_secret, start_dt, end_dt):
     return metrics
 
 
+def coerce_int(value):
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return None
+
+
+def pick_best_media_size(details):
+    sizes = (details or {}).get("sizes", {})
+    best = None
+    best_area = -1
+    for info in sizes.values():
+        if not isinstance(info, dict):
+            continue
+        url = info.get("source_url")
+        width = coerce_int(info.get("width"))
+        height = coerce_int(info.get("height"))
+        if not url:
+            continue
+        area = (width or 0) * (height or 0)
+        if area > best_area:
+            best = {"url": url, "width": width, "height": height}
+            best_area = area
+    return best
+
+
+def first_content_image_url(post):
+    rendered = ((post.get("content") or {}).get("rendered")) or ""
+    m = re.search(r"<img[^>]+src=[\"']([^\"']+)[\"']", rendered, flags=re.IGNORECASE)
+    return m.group(1) if m else None
+
+
 def get_featured_image_info(post):
     embedded = post.get("_embedded", {})
     media = embedded.get("wp:featuredmedia", [])
     if media and isinstance(media, list):
         item = media[0]
         details = item.get("media_details", {})
+        width = coerce_int(details.get("width"))
+        height = coerce_int(details.get("height"))
+        source_url = item.get("source_url")
+        if not source_url:
+            best_size = pick_best_media_size(details)
+            if best_size:
+                source_url = best_size["url"]
+                if width is None:
+                    width = best_size["width"]
+                if height is None:
+                    height = best_size["height"]
+        if source_url:
+            return {
+                "url": source_url,
+                "width": width,
+                "height": height,
+            }
+
+    jetpack_url = post.get("jetpack_featured_media_url")
+    if jetpack_url:
+        rtt = post.get("rttpg_featured_image_url") or {}
+        full = rtt.get("full")
+        width = coerce_int(full[1]) if isinstance(full, list) and len(full) > 2 else None
+        height = coerce_int(full[2]) if isinstance(full, list) and len(full) > 2 else None
+        return {"url": jetpack_url, "width": width, "height": height}
+
+    rtt = post.get("rttpg_featured_image_url") or {}
+    full = rtt.get("full")
+    if isinstance(full, list) and full and full[0]:
         return {
-            "url": item.get("source_url"),
-            "width": details.get("width"),
-            "height": details.get("height"),
+            "url": full[0],
+            "width": coerce_int(full[1]) if len(full) > 2 else None,
+            "height": coerce_int(full[2]) if len(full) > 2 else None,
         }
+
+    parsely_meta = ((post.get("parsely") or {}).get("meta") or {})
+    parsely_image = parsely_meta.get("image") or {}
+    if isinstance(parsely_image, dict) and parsely_image.get("url"):
+        return {"url": parsely_image.get("url"), "width": None, "height": None}
+
+    yoast = post.get("yoast_head_json") or {}
+    og_images = yoast.get("og_image") or []
+    if isinstance(og_images, list) and og_images:
+        img = og_images[0] if isinstance(og_images[0], dict) else {}
+        if img.get("url"):
+            return {
+                "url": img.get("url"),
+                "width": coerce_int(img.get("width")),
+                "height": coerce_int(img.get("height")),
+            }
+    inline_url = first_content_image_url(post)
+    if inline_url:
+        return {"url": inline_url, "width": None, "height": None}
     return {"url": None, "width": None, "height": None}
 
 
@@ -209,6 +289,43 @@ def build_items(posts, metrics):
         )
     items.sort(key=lambda x: (x["returning_users"], x["date_gmt"] or ""), reverse=True)
     return items
+
+
+def clamp_words(text, max_words):
+    words = [w for w in text.split() if w]
+    return " ".join(words[:max_words]).strip()
+
+
+TRAILING_STOPWORDS = {
+    "a",
+    "an",
+    "the",
+    "and",
+    "or",
+    "but",
+    "to",
+    "of",
+    "in",
+    "on",
+    "at",
+    "for",
+    "from",
+    "with",
+    "by",
+    "about",
+    "as",
+}
+
+
+def trim_trailing_stopwords(text):
+    words = [w for w in text.split() if w]
+    while words and words[-1].lower() in TRAILING_STOPWORDS:
+        words.pop()
+    return " ".join(words).strip()
+
+
+def pick_subject_base(headline):
+    return smarten_punctuation(strip_html(headline)).strip()
 
 
 def build_item_html(item, square_index):
@@ -290,20 +407,31 @@ def save_state(path, state):
         f.write("\n")
 
 
-def choose_since(args, state, timezone_name):
+def choose_default_since(timezone_name, now_dt):
+    tz = ZoneInfo(timezone_name)
+    now_local = now_dt.astimezone(tz)
+    anchor = now_local.replace(hour=14, minute=0, second=0, microsecond=0)
+    # Roll backward to the most recent Mon/Thu 2:00 PM local cutoff.
+    while anchor >= now_local or anchor.weekday() not in (0, 3):
+        anchor -= dt.timedelta(days=1)
+        anchor = anchor.replace(hour=14, minute=0, second=0, microsecond=0)
+    return anchor.astimezone(dt.timezone.utc)
+
+
+def choose_since(args, state, timezone_name, now_dt):
     if args.since:
         since = parse_iso(args.since)
         if since.tzinfo is None:
             raise RuntimeError("--since must include timezone.")
         return since.astimezone(dt.timezone.utc)
-    last_success = state.get("last_successful_run")
-    if last_success:
-        return parse_iso(last_success).astimezone(dt.timezone.utc)
+    if os.environ.get("NEWSLETTER_WINDOW_MODE", "").lower() == "state":
+        last_success = state.get("last_successful_run")
+        if last_success:
+            return parse_iso(last_success).astimezone(dt.timezone.utc)
     initial_since = os.environ.get("NEWSLETTER_INITIAL_SINCE")
     if initial_since:
         return parse_iso(initial_since).astimezone(dt.timezone.utc)
-    tz = ZoneInfo(timezone_name)
-    return dt.datetime.now(tz).astimezone(dt.timezone.utc) - dt.timedelta(days=4)
+    return choose_default_since(timezone_name, now_dt)
 
 
 def slack_auth_headers(bot_token):
@@ -390,9 +518,9 @@ def main():
         if not slack_token or not slack_channel_id:
             raise RuntimeError("Need SLACK_BOT_TOKEN and SLACK_CHANNEL_ID unless --skip-slack is used.")
 
-    state = load_state(state_file)
-    since_dt = choose_since(args, state, timezone_name)
     now_dt = now_utc()
+    state = load_state(state_file)
+    since_dt = choose_since(args, state, timezone_name, now_dt)
     if since_dt >= now_dt:
         raise RuntimeError(f"Since time {since_dt.isoformat()} is not before now.")
     if args.debug:
