@@ -3,9 +3,8 @@ services:
     name: newsroom-chatbot
     env: python
     plan: starter
-    rootDir: projects/newsroom-chatbot
-    buildCommand: pip install -r requirements.txt
-    startCommand: PYTHONPATH=src uvicorn newsroom_chatbot.app:app --host 0.0.0.0 --port $PORT
+    buildCommand: pip install -r projects/newsroom-chatbot/requirements.txt
+    startCommand: PYTHONPATH=projects/newsroom-chatbot/src uvicorn newsroom_chatbot.app:app --host 0.0.0.0 --port $PORT
     healthCheckPath: /healthz
     envVars:
       - key: OPENAI_API_KEY
