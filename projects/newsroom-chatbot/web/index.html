@@ -1,0 +1,196 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Current Newsroom Chatbot</title>
+    <style>
+      :root {
+        --bg: #f4f1e8;
+        --paper: #fffdfa;
+        --ink: #1d2a2f;
+        --muted: #5d6c72;
+        --accent: #0e6a6a;
+        --border: #d7cfc0;
+      }
+
+      body {
+        margin: 0;
+        font-family: "Source Sans 3", "Helvetica Neue", Arial, sans-serif;
+        color: var(--ink);
+        background: radial-gradient(circle at 10% 0%, #fef8ea, var(--bg));
+      }
+
+      .shell {
+        max-width: 920px;
+        margin: 24px auto;
+        padding: 20px;
+      }
+
+      h1 {
+        margin: 0 0 6px;
+        font-family: "Libre Baskerville", Georgia, serif;
+        font-size: 28px;
+      }
+
+      .sub {
+        color: var(--muted);
+        margin-bottom: 16px;
+      }
+
+      .chat {
+        background: var(--paper);
+        border: 1px solid var(--border);
+        border-radius: 12px;
+        padding: 14px;
+        min-height: 360px;
+      }
+
+      .message {
+        margin-bottom: 14px;
+        line-height: 1.45;
+        white-space: pre-wrap;
+      }
+
+      .user {
+        font-weight: 700;
+      }
+
+      .assistant {
+        border-left: 3px solid var(--accent);
+        padding-left: 10px;
+      }
+
+      .sources {
+        margin-top: 8px;
+        font-size: 14px;
+      }
+
+      .sources a {
+        color: var(--accent);
+      }
+
+      form {
+        margin-top: 14px;
+        display: grid;
+        gap: 10px;
+      }
+
+      textarea,
+      input,
+      button {
+        font: inherit;
+      }
+
+      textarea {
+        width: 100%;
+        min-height: 84px;
+        border: 1px solid var(--border);
+        border-radius: 10px;
+        padding: 10px;
+        box-sizing: border-box;
+      }
+
+      .row {
+        display: grid;
+        grid-template-columns: repeat(3, 1fr) auto;
+        gap: 8px;
+      }
+
+      input {
+        border: 1px solid var(--border);
+        border-radius: 8px;
+        padding: 8px;
+      }
+
+      button {
+        border: 0;
+        border-radius: 8px;
+        padding: 10px 14px;
+        font-weight: 700;
+        color: #fff;
+        background: var(--accent);
+        cursor: pointer;
+      }
+
+      @media (max-width: 780px) {
+        .row {
+          grid-template-columns: 1fr;
+        }
+      }
+    </style>
+  </head>
+  <body>
+    <div class="shell">
+      <h1>Current Coverage Assistant</h1>
+      <div class="sub">Ask about prior reporting and get a sourced summary.</div>
+      <div id="chat" class="chat"></div>
+      <form id="form">
+        <textarea id="question" placeholder="What have we reported about NPR's podcasting efforts?"></textarea>
+        <div class="row">
+          <input id="topk" type="number" min="1" max="20" value="8" placeholder="Top K sources" />
+          <input id="dateFrom" type="text" placeholder="Date from (optional)" />
+          <input id="dateTo" type="text" placeholder="Date to (optional)" />
+          <button type="submit">Ask</button>
+        </div>
+      </form>
+    </div>
+    <script>
+      const chat = document.getElementById("chat");
+      const form = document.getElementById("form");
+      const questionInput = document.getElementById("question");
+      const topkInput = document.getElementById("topk");
+      const dateFromInput = document.getElementById("dateFrom");
+      const dateToInput = document.getElementById("dateTo");
+
+      const addMessage = (kind, text, sources = []) => {
+        const wrap = document.createElement("div");
+        wrap.className = `message ${kind}`;
+        wrap.textContent = text;
+        if (sources.length) {
+          const src = document.createElement("div");
+          src.className = "sources";
+          src.innerHTML = sources
+            .map((s) => `<div>[${s.source_id}] <a href="${s.url}" target="_blank" rel="noreferrer">${s.title}</a></div>`)
+            .join("");
+          wrap.appendChild(src);
+        }
+        chat.appendChild(wrap);
+        chat.scrollTop = chat.scrollHeight;
+      };
+
+      addMessage("assistant", "Ready. Ask a question about previous coverage.");
+
+      form.addEventListener("submit", async (event) => {
+        event.preventDefault();
+        const question = questionInput.value.trim();
+        if (!question) return;
+
+        const payload = {
+          question,
+          top_k: Number(topkInput.value || 8),
+          date_from: dateFromInput.value.trim() || null,
+          date_to: dateToInput.value.trim() || null,
+        };
+
+        addMessage("user", question);
+        questionInput.value = "";
+        addMessage("assistant", "Searching indexed coverage...");
+
+        try {
+          const response = await fetch("/api/chat", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify(payload),
+          });
+          const data = await response.json();
+          chat.removeChild(chat.lastChild);
+          addMessage("assistant", data.answer || "No answer returned.", data.sources || []);
+        } catch (error) {
+          chat.removeChild(chat.lastChild);
+          addMessage("assistant", `Request failed: ${error}`);
+        }
+      });
+    </script>
+  </body>
+</html>
