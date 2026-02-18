@@ -3,7 +3,7 @@ services:
     name: newsroom-chatbot
     env: python
     plan: starter
-    buildCommand: sh -lc 'if [ -f requirements.txt ]; then pip install -r requirements.txt; else pip install -r projects/newsroom-chatbot/requirements.txt; fi'
+    buildCommand: sh -lc 'if [ -f requirements.txt ]; then python -m pip install --break-system-packages -r requirements.txt; else python -m pip install --break-system-packages -r projects/newsroom-chatbot/requirements.txt; fi'
     startCommand: sh -lc 'if [ -d src/newsroom_chatbot ]; then PYTHONPATH=src; else PYTHONPATH=projects/newsroom-chatbot/src; fi; export PYTHONPATH; uvicorn newsroom_chatbot.app:app --host 0.0.0.0 --port $PORT'
     healthCheckPath: /healthz
     envVars:
