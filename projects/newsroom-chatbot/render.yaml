@@ -1,0 +1,22 @@
+services:
+  - type: web
+    name: newsroom-chatbot
+    env: python
+    plan: starter
+    rootDir: projects/newsroom-chatbot
+    buildCommand: pip install -r requirements.txt
+    startCommand: PYTHONPATH=src uvicorn newsroom_chatbot.app:app --host 0.0.0.0 --port $PORT
+    healthCheckPath: /healthz
+    envVars:
+      - key: OPENAI_API_KEY
+        sync: false
+      - key: NEWSROOM_AUTH_USERNAME
+        sync: false
+      - key: NEWSROOM_AUTH_PASSWORD
+        sync: false
+      - key: NEWSROOM_DB_PATH
+        value: /var/data/newsroom.db
+    disk:
+      name: newsroom-db
+      mountPath: /var/data
+      sizeGB: 2
