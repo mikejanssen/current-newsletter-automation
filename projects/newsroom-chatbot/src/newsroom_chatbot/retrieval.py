@@ -2,6 +2,7 @@ import json
 import math
 import sqlite3
 from dataclasses import dataclass
+from typing import Any
 
 
 @dataclass
@@ -38,11 +39,7 @@ def search_chunks(
     SELECT
       c.id AS chunk_id,
       c.article_id AS article_id,
-      c.content AS content,
-      c.embedding_json AS embedding_json,
-      a.title AS title,
-      a.url AS url,
-      a.published_at AS published_at
+      c.embedding_json AS embedding_json
     FROM chunks c
     JOIN articles a ON a.id = c.article_id
     WHERE c.embedding_json IS NOT NULL
@@ -56,11 +53,57 @@ def search_chunks(
         params.append(date_to)
     sql += " ORDER BY c.id"
 
-    scored: list[RetrievedChunk] = []
-    for row in conn.execute(sql, params).fetchall():
+    best_by_article: dict[int, tuple[int, float]] = {}
+    for row in conn.execute(sql, params):
         embedding = json.loads(row["embedding_json"])
         score = cosine_similarity(query_embedding, embedding)
-        scored.append(
+        article_id = int(row["article_id"])
+        chunk_id = int(row["chunk_id"])
+        prev = best_by_article.get(article_id)
+        if prev is None or score > prev[1]:
+            best_by_article[article_id] = (chunk_id, score)
+
+    if not best_by_article:
+        return []
+
+    scored = sorted(best_by_article.values(), key=lambda item: item[1], reverse=True)
+    top_score = scored[0][1]
+    min_score = max(0.12, top_score * 0.55)
+    minimum_results = min(3, top_k)
+
+    selected: list[tuple[int, float]] = [item for item in scored if item[1] >= min_score][:top_k]
+
+    # If thresholding is too strict, backfill with next-best unique articles.
+    if len(selected) < minimum_results:
+        selected = scored[:minimum_results]
+
+    selected = selected[:top_k]
+    if not selected:
+        return []
+
+    selected_chunk_ids = [chunk_id for chunk_id, _ in selected]
+    placeholders = ",".join("?" for _ in selected_chunk_ids)
+    details_sql = f"""
+    SELECT
+      c.id AS chunk_id,
+      c.article_id AS article_id,
+      c.content AS content,
+      a.title AS title,
+      a.url AS url,
+      a.published_at AS published_at
+    FROM chunks c
+    JOIN articles a ON a.id = c.article_id
+    WHERE c.id IN ({placeholders})
+    """
+    details_rows = conn.execute(details_sql, selected_chunk_ids).fetchall()
+    details_by_chunk_id: dict[int, sqlite3.Row] = {int(row["chunk_id"]): row for row in details_rows}
+
+    output: list[RetrievedChunk] = []
+    for chunk_id, score in selected:
+        row: Any = details_by_chunk_id.get(chunk_id)
+        if row is None:
+            continue
+        output.append(
             RetrievedChunk(
                 chunk_id=int(row["chunk_id"]),
                 article_id=int(row["article_id"]),
@@ -71,37 +114,4 @@ def search_chunks(
                 score=score,
             )
         )
-
-    scored.sort(key=lambda item: item.score, reverse=True)
-    if not scored:
-        return []
-
-    top_score = scored[0].score
-    min_score = max(0.12, top_score * 0.55)
-    minimum_results = min(3, top_k)
-
-    selected: list[RetrievedChunk] = []
-    seen_article_ids: set[int] = set()
-
-    # Prefer relevance + diversity: one chunk per article.
-    for item in scored:
-        if item.article_id in seen_article_ids:
-            continue
-        if item.score < min_score:
-            continue
-        selected.append(item)
-        seen_article_ids.add(item.article_id)
-        if len(selected) >= top_k:
-            return selected
-
-    # If thresholding is too strict, backfill with next-best unique articles.
-    if len(selected) < minimum_results:
-        for item in scored:
-            if item.article_id in seen_article_ids:
-                continue
-            selected.append(item)
-            seen_article_ids.add(item.article_id)
-            if len(selected) >= minimum_results:
-                break
-
-    return selected[:top_k]
+    return output
