@@ -140,6 +140,7 @@ def chat(request: ChatRequest) -> dict[str, Any]:
 
     chunks = search_chunks(
         db,
+        query_text=request.question,
         query_embedding=query_embedding,
         top_k=request.top_k,
         date_from=request.date_from,

@@ -1,5 +1,6 @@
 import json
 import math
+import re
 import sqlite3
 from dataclasses import dataclass
 from typing import Any
@@ -27,9 +28,130 @@ def cosine_similarity(a: list[float], b: list[float]) -> float:
     return dot / (norm_a * norm_b)
 
 
+STOPWORDS = {
+    "a",
+    "about",
+    "again",
+    "an",
+    "and",
+    "are",
+    "as",
+    "at",
+    "be",
+    "for",
+    "from",
+    "have",
+    "how",
+    "in",
+    "is",
+    "it",
+    "of",
+    "on",
+    "or",
+    "our",
+    "that",
+    "the",
+    "to",
+    "we",
+    "what",
+    "when",
+    "where",
+    "which",
+    "who",
+    "with",
+}
+
+
+def _normalize_query(text: str) -> str:
+    lowered = text.lower()
+    cleaned = re.sub(r"[^a-z0-9\\s]", " ", lowered)
+    return re.sub(r"\\s+", " ", cleaned).strip()
+
+
+def _lexical_rescue_candidates(
+    conn: sqlite3.Connection,
+    *,
+    query_text: str,
+    top_k: int,
+    date_from: str | None,
+    date_to: str | None,
+    top_score: float,
+) -> list[tuple[int, int, float]]:
+    normalized = _normalize_query(query_text)
+    if len(normalized) < 3:
+        return []
+
+    base_sql = """
+    SELECT
+      c.id AS chunk_id,
+      c.article_id AS article_id,
+      a.title AS title,
+      c.content AS content
+    FROM chunks c
+    JOIN articles a ON a.id = c.article_id
+    WHERE c.embedding_json IS NOT NULL
+    """
+    base_params: list[str] = []
+    if date_from:
+        base_sql += " AND (a.published_at IS NOT NULL AND a.published_at >= ?)"
+        base_params.append(date_from)
+    if date_to:
+        base_sql += " AND (a.published_at IS NOT NULL AND a.published_at <= ?)"
+        base_params.append(date_to)
+
+    by_article: dict[int, tuple[int, int, float]] = {}
+
+    # Exact phrase search catches named entities that embeddings can miss.
+    phrase_like = f"%{normalized}%"
+    phrase_sql = (
+        base_sql
+        + """
+    AND (LOWER(a.title) LIKE ? OR LOWER(c.content) LIKE ?)
+    ORDER BY c.id
+    LIMIT ?
+    """
+    )
+    phrase_rows = conn.execute(phrase_sql, [*base_params, phrase_like, phrase_like, top_k * 8]).fetchall()
+    for row in phrase_rows:
+        article_id = int(row["article_id"])
+        if article_id in by_article:
+            continue
+        title = str(row["title"] or "").lower()
+        score = top_score + (0.06 if normalized in title else 0.04)
+        by_article[article_id] = (int(row["chunk_id"]), article_id, score)
+
+    terms = [t for t in normalized.split() if len(t) >= 4 and t not in STOPWORDS]
+    if len(terms) >= 2:
+        terms = terms[:4]
+        term_clauses = " AND ".join("(LOWER(a.title) LIKE ? OR LOWER(c.content) LIKE ?)" for _ in terms)
+        term_params: list[str] = []
+        for term in terms:
+            like = f"%{term}%"
+            term_params.extend([like, like])
+        term_sql = (
+            base_sql
+            + f"""
+        AND {term_clauses}
+        ORDER BY c.id
+        LIMIT ?
+        """
+        )
+        term_rows = conn.execute(term_sql, [*base_params, *term_params, top_k * 10]).fetchall()
+        for row in term_rows:
+            article_id = int(row["article_id"])
+            if article_id in by_article:
+                continue
+            score = top_score + 0.02
+            by_article[article_id] = (int(row["chunk_id"]), article_id, score)
+
+    candidates = sorted(by_article.values(), key=lambda x: x[2], reverse=True)
+    return candidates[: min(top_k, 3)]
+
+
 def search_chunks(
     conn: sqlite3.Connection,
     *,
+    query_text: str,
     query_embedding: list[float],
     top_k: int = 8,
     date_from: str | None = None,
@@ -66,22 +188,47 @@ def search_chunks(
     if not best_by_article:
         return []
 
-    scored = sorted(best_by_article.values(), key=lambda item: item[1], reverse=True)
-    top_score = scored[0][1]
+    scored = sorted(
+        ((article_id, chunk_id, score) for article_id, (chunk_id, score) in best_by_article.items()),
+        key=lambda item: item[2],
+        reverse=True,
+    )
+    top_score = scored[0][2]
     min_score = max(0.12, top_score * 0.55)
     minimum_results = min(3, top_k)
 
-    selected: list[tuple[int, float]] = [item for item in scored if item[1] >= min_score][:top_k]
+    selected: list[tuple[int, int, float]] = [item for item in scored if item[2] >= min_score][:top_k]
 
     # If thresholding is too strict, backfill with next-best unique articles.
     if len(selected) < minimum_results:
         selected = scored[:minimum_results]
 
+    lexical = _lexical_rescue_candidates(
+        conn,
+        query_text=query_text,
+        top_k=top_k,
+        date_from=date_from,
+        date_to=date_to,
+        top_score=top_score,
+    )
+    if lexical:
+        seen = {article_id for article_id, _, _ in selected}
+        merged = list(lexical)
+        seen.update(article_id for _, article_id, _ in lexical)
+        for item in selected:
+            if item[0] in seen:
+                continue
+            merged.append(item)
+            seen.add(item[0])
+            if len(merged) >= top_k:
+                break
+        selected = merged[:top_k]
+
     selected = selected[:top_k]
     if not selected:
         return []
 
-    selected_chunk_ids = [chunk_id for chunk_id, _ in selected]
+    selected_chunk_ids = [chunk_id for _, chunk_id, _ in selected]
     placeholders = ",".join("?" for _ in selected_chunk_ids)
     details_sql = f"""
     SELECT
@@ -99,7 +246,7 @@ def search_chunks(
     details_by_chunk_id: dict[int, sqlite3.Row] = {int(row["chunk_id"]): row for row in details_rows}
 
     output: list[RetrievedChunk] = []
-    for chunk_id, score in selected:
+    for _, chunk_id, score in selected:
         row: Any = details_by_chunk_id.get(chunk_id)
         if row is None:
             continue
