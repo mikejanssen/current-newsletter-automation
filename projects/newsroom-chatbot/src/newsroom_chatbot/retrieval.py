@@ -150,7 +150,8 @@ def _lexical_rescue_candidates(
       c.id AS chunk_id,
       c.article_id AS article_id,
       a.title AS title,
-      c.content AS content
+      c.content AS content,
+      a.published_at AS published_at
     FROM chunks c
     JOIN articles a ON a.id = c.article_id
     WHERE c.embedding_json IS NOT NULL
@@ -172,7 +173,7 @@ def _lexical_rescue_candidates(
             base_sql
             + """
         AND (LOWER(a.title) LIKE ? OR LOWER(c.content) LIKE ?)
-        ORDER BY c.id
+        ORDER BY a.published_at DESC, c.id DESC
         LIMIT ?
         """
         )
@@ -201,18 +202,18 @@ def _lexical_rescue_candidates(
             base_sql
             + f"""
         AND ({term_clauses})
-        ORDER BY c.id
+        ORDER BY a.published_at DESC, c.id DESC
         LIMIT ?
         """
         )
-        term_rows = conn.execute(term_sql, [*base_params, *term_params, top_k * 20]).fetchall()
+        term_rows = conn.execute(term_sql, [*base_params, *term_params, top_k * 400]).fetchall()
         for row in term_rows:
             article_id = int(row["article_id"])
             if article_id in by_article:
                 continue
             hay = f"{str(row['title'] or '').lower()} {str(row['content'] or '').lower()}"
             hits = sum(1 for t in terms if t in hay)
-            if hits <= 0:
+            if hits < min(2, len(terms)):
                 continue
             score = top_score + min(0.05, 0.01 * hits)
             by_article[article_id] = (int(row["chunk_id"]), article_id, score)
