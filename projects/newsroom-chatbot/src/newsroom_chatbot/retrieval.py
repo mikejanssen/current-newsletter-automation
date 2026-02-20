@@ -187,7 +187,7 @@ def _lexical_rescue_candidates(
                 continue
             title = str(row["title"] or "").lower()
             score = top_score + (0.08 if phrase in title else 0.06)
-            by_article[article_id] = (int(row["chunk_id"]), article_id, score)
+            by_article[article_id] = (article_id, int(row["chunk_id"]), score)
 
     terms = [t for t in normalized.split() if len(t) >= 3 and t not in STOPWORDS]
     terms = terms[:6]
@@ -216,7 +216,7 @@ def _lexical_rescue_candidates(
             if hits < min(2, len(terms)):
                 continue
             score = top_score + min(0.05, 0.01 * hits)
-            by_article[article_id] = (int(row["chunk_id"]), article_id, score)
+            by_article[article_id] = (article_id, int(row["chunk_id"]), score)
 
     candidates = sorted(by_article.values(), key=lambda x: x[2], reverse=True)
     return candidates[: min(top_k, 4)]
