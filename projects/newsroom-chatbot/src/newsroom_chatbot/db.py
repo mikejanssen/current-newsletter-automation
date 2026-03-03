@@ -24,6 +24,9 @@ CREATE TABLE IF NOT EXISTS chunks (
   FOREIGN KEY(article_id) REFERENCES articles(id),
   UNIQUE(article_id, chunk_index)
 );
+
+CREATE INDEX IF NOT EXISTS idx_articles_published_at ON articles(published_at);
+CREATE INDEX IF NOT EXISTS idx_chunks_article_id ON chunks(article_id);
 """
 
 

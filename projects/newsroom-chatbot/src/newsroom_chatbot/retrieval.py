@@ -222,6 +222,93 @@ def _lexical_rescue_candidates(
     return candidates[: min(top_k, 4)]
 
 
+def _candidate_embedding_rows(
+    conn: sqlite3.Connection,
+    *,
+    query_text: str,
+    top_k: int,
+    date_from: str | None,
+    date_to: str | None,
+) -> list[sqlite3.Row]:
+    base_sql = """
+    SELECT
+      c.id AS chunk_id,
+      c.article_id AS article_id,
+      c.embedding_json AS embedding_json
+    FROM chunks c
+    JOIN articles a ON a.id = c.article_id
+    WHERE c.embedding_json IS NOT NULL
+    """
+    base_params: list[str] = []
+    if date_from:
+        base_sql += " AND (a.published_at IS NOT NULL AND a.published_at >= ?)"
+        base_params.append(date_from)
+    if date_to:
+        base_sql += " AND (a.published_at IS NOT NULL AND a.published_at <= ?)"
+        base_params.append(date_to)
+
+    normalized = _normalize_query(query_text)
+    phrase_candidates = _extract_phrase_candidates(query_text)
+    terms = [t for t in normalized.split() if len(t) >= 3 and t not in STOPWORDS][:6]
+
+    rows: list[sqlite3.Row] = []
+    seen_chunk_ids: set[int] = set()
+
+    def add_rows(query_sql: str, params: list[Any]) -> None:
+        for row in conn.execute(query_sql, params).fetchall():
+            chunk_id = int(row["chunk_id"])
+            if chunk_id in seen_chunk_ids:
+                continue
+            seen_chunk_ids.add(chunk_id)
+            rows.append(row)
+
+    lexical_limit = max(top_k * 250, 3000)
+    if phrase_candidates:
+        for phrase in phrase_candidates[:4]:
+            phrase_like = f"%{phrase}%"
+            phrase_sql = (
+                base_sql
+                + """
+            AND (LOWER(a.title) LIKE ? OR LOWER(c.content) LIKE ? OR LOWER(a.url) LIKE ?)
+            ORDER BY a.published_at DESC, c.id DESC
+            LIMIT ?
+            """
+            )
+            add_rows(phrase_sql, [*base_params, phrase_like, phrase_like, phrase_like, lexical_limit])
+
+    if terms and len(rows) < max(top_k * 40, 250):
+        term_clauses = " OR ".join(
+            "(LOWER(a.title) LIKE ? OR LOWER(c.content) LIKE ? OR LOWER(a.url) LIKE ?)"
+            for _ in terms
+        )
+        term_params: list[str] = []
+        for term in terms:
+            like = f"%{term}%"
+            term_params.extend([like, like, like])
+        term_sql = (
+            base_sql
+            + f"""
+        AND ({term_clauses})
+        ORDER BY a.published_at DESC, c.id DESC
+        LIMIT ?
+        """
+        )
+        add_rows(term_sql, [*base_params, *term_params, lexical_limit])
+
+    recent_limit = max(top_k * 500, 5000)
+    if not rows or len(rows) < max(top_k * 60, 500):
+        recent_sql = (
+            base_sql
+            + """
+        ORDER BY a.published_at DESC, c.id DESC
+        LIMIT ?
+        """
+        )
+        add_rows(recent_sql, [*base_params, recent_limit])
+
+    return rows
+
+
 def search_chunks(
     conn: sqlite3.Connection,
     *,
@@ -231,26 +318,15 @@ def search_chunks(
     date_from: str | None = None,
     date_to: str | None = None,
 ) -> list[RetrievedChunk]:
-    sql = """
-    SELECT
-      c.id AS chunk_id,
-      c.article_id AS article_id,
-      c.embedding_json AS embedding_json
-    FROM chunks c
-    JOIN articles a ON a.id = c.article_id
-    WHERE c.embedding_json IS NOT NULL
-    """
-    params: list[str] = []
-    if date_from:
-        sql += " AND (a.published_at IS NOT NULL AND a.published_at >= ?)"
-        params.append(date_from)
-    if date_to:
-        sql += " AND (a.published_at IS NOT NULL AND a.published_at <= ?)"
-        params.append(date_to)
-    sql += " ORDER BY c.id"
-
     best_by_article: dict[int, tuple[int, float]] = {}
-    for row in conn.execute(sql, params):
+    candidate_rows = _candidate_embedding_rows(
+        conn,
+        query_text=query_text,
+        top_k=top_k,
+        date_from=date_from,
+        date_to=date_to,
+    )
+    for row in candidate_rows:
         embedding = json.loads(row["embedding_json"])
         score = cosine_similarity(query_embedding, embedding)
         article_id = int(row["article_id"])
@@ -288,7 +364,7 @@ def search_chunks(
     if lexical:
         seen = {article_id for article_id, _, _ in selected}
         merged = list(lexical)
-        seen.update(article_id for _, article_id, _ in lexical)
+        seen.update(article_id for article_id, _, _ in lexical)
         for item in selected:
             if item[0] in seen:
                 continue

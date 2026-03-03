@@ -20,4 +20,4 @@ services:
     disk:
       name: newsroom-db
       mountPath: /var/data
-      sizeGB: 2
+      sizeGB: 8
