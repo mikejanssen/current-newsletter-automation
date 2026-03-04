@@ -230,7 +230,21 @@ def _candidate_embedding_rows(
     date_from: str | None,
     date_to: str | None,
 ) -> list[sqlite3.Row]:
-    base_sql = """
+    article_sql = """
+    SELECT
+      a.id AS article_id
+    FROM articles a
+    WHERE 1=1
+    """
+    article_params: list[str] = []
+    if date_from:
+        article_sql += " AND (a.published_at IS NOT NULL AND a.published_at >= ?)"
+        article_params.append(date_from)
+    if date_to:
+        article_sql += " AND (a.published_at IS NOT NULL AND a.published_at <= ?)"
+        article_params.append(date_to)
+
+    chunk_sql_base = """
     SELECT
       c.id AS chunk_id,
       c.article_id AS article_id,
@@ -239,13 +253,6 @@ def _candidate_embedding_rows(
     JOIN articles a ON a.id = c.article_id
     WHERE c.embedding_json IS NOT NULL
     """
-    base_params: list[str] = []
-    if date_from:
-        base_sql += " AND (a.published_at IS NOT NULL AND a.published_at >= ?)"
-        base_params.append(date_from)
-    if date_to:
-        base_sql += " AND (a.published_at IS NOT NULL AND a.published_at <= ?)"
-        base_params.append(date_to)
 
     normalized = _normalize_query(query_text)
     phrase_candidates = _extract_phrase_candidates(query_text)
@@ -253,58 +260,81 @@ def _candidate_embedding_rows(
 
     rows: list[sqlite3.Row] = []
     seen_chunk_ids: set[int] = set()
+    article_ids: list[int] = []
+    seen_article_ids: set[int] = set()
 
-    def add_rows(query_sql: str, params: list[Any]) -> None:
+    def add_article_ids(query_sql: str, params: list[Any]) -> None:
         for row in conn.execute(query_sql, params).fetchall():
-            chunk_id = int(row["chunk_id"])
-            if chunk_id in seen_chunk_ids:
+            article_id = int(row["article_id"])
+            if article_id in seen_article_ids:
                 continue
-            seen_chunk_ids.add(chunk_id)
-            rows.append(row)
+            seen_article_ids.add(article_id)
+            article_ids.append(article_id)
 
-    lexical_limit = max(top_k * 250, 3000)
+    article_limit = max(top_k * 20, 120)
     if phrase_candidates:
         for phrase in phrase_candidates[:4]:
             phrase_like = f"%{phrase}%"
             phrase_sql = (
-                base_sql
+                article_sql
                 + """
-            AND (LOWER(a.title) LIKE ? OR LOWER(c.content) LIKE ? OR LOWER(a.url) LIKE ?)
-            ORDER BY a.published_at DESC, c.id DESC
+            AND (LOWER(a.title) LIKE ? OR LOWER(a.text) LIKE ? OR LOWER(a.url) LIKE ?)
+            ORDER BY a.published_at DESC, a.id DESC
             LIMIT ?
             """
             )
-            add_rows(phrase_sql, [*base_params, phrase_like, phrase_like, phrase_like, lexical_limit])
+            add_article_ids(
+                phrase_sql,
+                [*article_params, phrase_like, phrase_like, phrase_like, article_limit],
+            )
 
-    if terms and len(rows) < max(top_k * 40, 250):
-        term_clauses = " OR ".join(
-            "(LOWER(a.title) LIKE ? OR LOWER(c.content) LIKE ? OR LOWER(a.url) LIKE ?)"
-            for _ in terms
-        )
+    if terms and len(article_ids) < max(top_k * 10, 60):
+        term_clauses = " OR ".join("(LOWER(a.title) LIKE ? OR LOWER(a.url) LIKE ?)" for _ in terms)
         term_params: list[str] = []
         for term in terms:
             like = f"%{term}%"
-            term_params.extend([like, like, like])
+            term_params.extend([like, like])
         term_sql = (
-            base_sql
+            article_sql
             + f"""
         AND ({term_clauses})
-        ORDER BY a.published_at DESC, c.id DESC
+        ORDER BY a.published_at DESC, a.id DESC
         LIMIT ?
         """
         )
-        add_rows(term_sql, [*base_params, *term_params, lexical_limit])
+        add_article_ids(term_sql, [*article_params, *term_params, article_limit])
 
-    recent_limit = max(top_k * 500, 5000)
-    if not rows or len(rows) < max(top_k * 60, 500):
+    recent_article_limit = max(top_k * 15, 100)
+    if not article_ids or len(article_ids) < max(top_k * 8, 40):
         recent_sql = (
-            base_sql
+            article_sql
             + """
-        ORDER BY a.published_at DESC, c.id DESC
+        ORDER BY a.published_at DESC, a.id DESC
         LIMIT ?
         """
         )
-        add_rows(recent_sql, [*base_params, recent_limit])
+        add_article_ids(recent_sql, [*article_params, recent_article_limit])
+
+    if not article_ids:
+        return []
+
+    article_placeholders = ",".join("?" for _ in article_ids)
+    chunk_limit = max(top_k * 30, 400)
+    candidate_chunk_sql = (
+        chunk_sql_base
+        + f"""
+    AND c.article_id IN ({article_placeholders})
+    ORDER BY a.published_at DESC, c.article_id, c.chunk_index
+    LIMIT ?
+    """
+    )
+
+    for row in conn.execute(candidate_chunk_sql, [*article_ids, chunk_limit]).fetchall():
+        chunk_id = int(row["chunk_id"])
+        if chunk_id in seen_chunk_ids:
+            continue
+        seen_chunk_ids.add(chunk_id)
+        rows.append(row)
 
     return rows
 
