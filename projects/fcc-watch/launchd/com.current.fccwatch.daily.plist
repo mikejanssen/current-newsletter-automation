@@ -1,0 +1,59 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+  <dict>
+    <key>Label</key>
+    <string>com.current.fccwatch.daily</string>
+
+    <key>ProgramArguments</key>
+    <array>
+      <string>/bin/zsh</string>
+      <string>/Users/jansen/Current Dropbox/Mike Janssen/my-assistant/projects/fcc-watch/scripts/run-daily-scan.sh</string>
+    </array>
+
+    <key>WorkingDirectory</key>
+    <string>/Users/jansen/Current Dropbox/Mike Janssen/my-assistant/projects/fcc-watch</string>
+
+    <key>StartCalendarInterval</key>
+    <dict>
+      <key>Hour</key>
+      <integer>9</integer>
+      <key>Minute</key>
+      <integer>0</integer>
+    </dict>
+
+    <key>StandardOutPath</key>
+    <string>/Users/jansen/Current Dropbox/Mike Janssen/my-assistant/projects/fcc-watch/output/launchd-daily.out.log</string>
+    <key>StandardErrorPath</key>
+    <string>/Users/jansen/Current Dropbox/Mike Janssen/my-assistant/projects/fcc-watch/output/launchd-daily.err.log</string>
+
+    <key>EnvironmentVariables</key>
+    <dict>
+      <key>FCC_WATCH_LOOKBACK_DAYS</key>
+      <string>30</string>
+      <key>FCC_WATCH_PUBLIC_FILES_PRIORITY_MODE</key>
+      <string>balanced</string>
+      <key>FCC_WATCH_PREFLIGHT_TIMEOUT_SECONDS</key>
+      <string>8</string>
+      <key>FCC_WATCH_PREFLIGHT_RETRIES</key>
+      <string>1</string>
+      <key>FCC_WATCH_DIGEST_TIMEOUT_SECONDS</key>
+      <string>75</string>
+      <key>FCC_WATCH_DIGEST_RETRIES</key>
+      <string>2</string>
+      <key>FCC_WATCH_ECFS_TIMEOUT_SECONDS</key>
+      <string>45</string>
+      <key>FCC_WATCH_ECFS_RETRIES</key>
+      <string>2</string>
+      <key>FCC_WATCH_MEETING_TIMEOUT_SECONDS</key>
+      <string>45</string>
+      <key>FCC_WATCH_MEETING_RETRIES</key>
+      <string>2</string>
+      <key>SLACK_WEBHOOK_URL</key>
+      <string>SET_IN_LOCAL_LAUNCHAGENT_ONLY</string>
+    </dict>
+
+    <key>RunAtLoad</key>
+    <false/>
+  </dict>
+</plist>
