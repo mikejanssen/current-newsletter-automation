@@ -1,0 +1,18 @@
+{
+  "stations_considered": 66,
+  "path_date": "2026-03-04",
+  "strict_station_count": 0,
+  "watchlist_station_count": 1,
+  "strict_highlights": [],
+  "watchlist_highlights": [
+    {
+      "pattern": "going concern",
+      "station_id": "opb",
+      "station_name": "Oregon Public Broadcasting",
+      "title": "Report 20of 20Independent 20Auditors 20and 20Consolidated 20Financial 20Statements 20FY25 1772128338562",
+      "source": "../audit-watch/output/audits/opb/2026-03-04/Report_20of_20Independent_20Auditors_20and_20Consolidated_20Financial_20Statements_20FY25_1772128338562.pdf",
+      "snippet": "that raise substantial doubt about the organization\u2019s ability to continue as a going concern within one year after the date that the consolidated financial statements are available to be issued.  1  \fauditor\u2019s re",
+      "confidence": "watchlist"
+    }
+  ]
+}

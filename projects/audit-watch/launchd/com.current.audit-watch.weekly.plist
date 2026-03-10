@@ -1,0 +1,51 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+  <dict>
+    <key>Label</key>
+    <string>com.current.audit-watch.weekly</string>
+
+    <key>ProgramArguments</key>
+    <array>
+      <string>/bin/zsh</string>
+      <string>/Users/jansen/Current Dropbox/Mike Janssen/my-assistant/projects/audit-watch/scripts/run-daily-scan.sh</string>
+    </array>
+
+    <key>WorkingDirectory</key>
+    <string>/Users/jansen/Current Dropbox/Mike Janssen/my-assistant/projects/audit-watch</string>
+
+    <key>StartCalendarInterval</key>
+    <dict>
+      <key>Weekday</key>
+      <integer>1</integer>
+      <key>Hour</key>
+      <integer>9</integer>
+      <key>Minute</key>
+      <integer>10</integer>
+    </dict>
+
+    <key>StandardOutPath</key>
+    <string>/Users/jansen/Current Dropbox/Mike Janssen/my-assistant/projects/audit-watch/output/launchd-weekly.out.log</string>
+    <key>StandardErrorPath</key>
+    <string>/Users/jansen/Current Dropbox/Mike Janssen/my-assistant/projects/audit-watch/output/launchd-weekly.err.log</string>
+
+    <key>EnvironmentVariables</key>
+    <dict>
+      <key>PATH</key>
+      <string>/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin</string>
+      <key>SLACK_WEBHOOK_URL</key>
+      <string>https://hooks.slack.com/services/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</string>
+      <key>AUDIT_WATCH_TIMEOUT_SECONDS</key>
+      <string>20</string>
+      <key>AUDIT_WATCH_NOTIFY_ON_NO_CHANGES</key>
+      <string>0</string>
+      <key>AUDIT_WATCH_SLACK_MAX_NEW_DOCS</key>
+      <string>5</string>
+      <key>AUDIT_WATCH_SLACK_MAX_FAILURES</key>
+      <string>10</string>
+    </dict>
+
+    <key>RunAtLoad</key>
+    <false/>
+  </dict>
+</plist>

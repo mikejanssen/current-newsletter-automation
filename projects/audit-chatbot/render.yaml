@@ -1,0 +1,23 @@
+services:
+  - type: web
+    name: audit-chatbot
+    env: python
+    plan: starter
+    buildCommand: sh -lc 'mkdir -p .render-deps && if [ -f requirements.txt ]; then python3 -m pip install --target .render-deps -r requirements.txt; else python3 -m pip install --target .render-deps -r projects/audit-chatbot/requirements.txt; fi'
+    startCommand: sh -lc 'if [ -d src/audit_chatbot ]; then APP_SRC=src; else APP_SRC=projects/audit-chatbot/src; fi; export PYTHONPATH=.render-deps:$APP_SRC; python3 -m uvicorn audit_chatbot.app:app --host 0.0.0.0 --port $PORT'
+    healthCheckPath: /healthz
+    envVars:
+      - key: PYTHON_VERSION
+        value: 3.11.11
+      - key: OPENAI_API_KEY
+        sync: false
+      - key: AUDIT_CHATBOT_AUTH_USERNAME
+        sync: false
+      - key: AUDIT_CHATBOT_AUTH_PASSWORD
+        sync: false
+      - key: AUDIT_CHATBOT_DB_PATH
+        value: /var/data/audit-chatbot.db
+    disk:
+      name: audit-chatbot-db
+      mountPath: /var/data
+      sizeGB: 8

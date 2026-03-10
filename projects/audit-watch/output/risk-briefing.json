@@ -1,0 +1,18 @@
+{
+  "stations_considered": 67,
+  "path_date": "2026-03-09",
+  "strict_station_count": 0,
+  "watchlist_station_count": 1,
+  "strict_highlights": [],
+  "watchlist_highlights": [
+    {
+      "pattern": "going concern",
+      "station_id": "salt-pond-community-broadcasting-co",
+      "station_name": "Salt Pond Community Broadcasting Co.",
+      "title": "2023 Audited WERU Financial Statement",
+      "source": "output/audits/salt-pond-community-broadcasting-co/2026-03-09/2023-Audited-WERU-Financial-Statement.pdf",
+      "snippet": "nd community broadcasting d/b/a weru community radio's ability to continue as a going concern within one year after the date the financial statements are available to be issued.  1  \fauditor's responsibilities for",
+      "confidence": "watchlist"
+    }
+  ]
+}

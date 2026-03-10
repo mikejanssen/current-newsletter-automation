@@ -1,0 +1,48 @@
+Stations total: 274
+Stations scanned: 120
+Stations skipped: 154
+Discovered candidate documents: 472
+New documents archived: 0
+Fetch/archive failures: 19
+Wrote run JSON: output/last-run.json
+Wrote briefing: output/briefing.md
+Wrote failures report: output/fetch-failures.json
+PDF files seen: 918
+Inserted docs: 425
+Updated docs: 0
+Deduped docs skipped: 493
+DB: ../audit-chatbot/output/audit-chatbot.db
+Stations considered: 66
+Path date filter: 2026-03-04
+Strict stations: 0
+Watchlist stations: 1
+Strict highlights: none
+Watchlist highlights:
+- [going concern] Oregon Public Broadcasting (opb) [watchlist]
+Wrote risk briefing: output/risk-briefing.md
+Wrote risk JSON: output/risk-briefing.json
+audit-watch: posted Slack summary
+Stations total: 274
+Stations scanned: 120
+Stations skipped: 154
+Discovered candidate documents: 475
+New documents archived: 3
+Fetch/archive failures: 21
+Wrote run JSON: output/last-run.json
+Wrote briefing: output/briefing.md
+Wrote failures report: output/fetch-failures.json
+PDF files seen: 921
+Inserted docs: 428
+Updated docs: 0
+Deduped docs skipped: 493
+DB: ../audit-chatbot/output/audit-chatbot.db
+Stations considered: 67
+Path date filter: 2026-03-09
+Strict stations: 0
+Watchlist stations: 1
+Strict highlights: none
+Watchlist highlights:
+- [going concern] Salt Pond Community Broadcasting Co. (salt-pond-community-broadcasting-co) [watchlist]
+Wrote risk briefing: output/risk-briefing.md
+Wrote risk JSON: output/risk-briefing.json
+audit-watch: posted Slack summary

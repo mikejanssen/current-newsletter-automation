@@ -1,0 +1,192 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Audit Chatbot</title>
+    <style>
+      :root {
+        --bg: #f3f0e7;
+        --paper: #fffdfa;
+        --ink: #162226;
+        --muted: #5d6d72;
+        --accent: #0e6a6a;
+        --border: #d8d0c2;
+      }
+      body {
+        margin: 0;
+        font-family: "Source Sans 3", "Helvetica Neue", Arial, sans-serif;
+        color: var(--ink);
+        background: radial-gradient(circle at 12% 0%, #fef7e7, var(--bg));
+      }
+      .shell {
+        max-width: 980px;
+        margin: 24px auto;
+        padding: 20px;
+      }
+      h1 {
+        margin: 0 0 6px;
+        font-family: "Libre Baskerville", Georgia, serif;
+        font-size: 28px;
+      }
+      .sub {
+        color: var(--muted);
+        margin-bottom: 14px;
+      }
+      .panel {
+        background: var(--paper);
+        border: 1px solid var(--border);
+        border-radius: 12px;
+        padding: 14px;
+      }
+      form {
+        display: grid;
+        gap: 10px;
+      }
+      .row {
+        display: grid;
+        gap: 8px;
+      }
+      .row.cols {
+        grid-template-columns: 1fr 1.2fr 1fr 1fr 1fr auto;
+      }
+      input,
+      select,
+      button {
+        font: inherit;
+        border: 1px solid var(--border);
+        border-radius: 8px;
+        padding: 8px;
+      }
+      button {
+        border: 0;
+        color: #fff;
+        background: var(--accent);
+        font-weight: 700;
+        cursor: pointer;
+      }
+      #out {
+        margin-top: 14px;
+        white-space: pre-wrap;
+        line-height: 1.45;
+        border-left: 3px solid var(--accent);
+        padding-left: 10px;
+      }
+      #sources {
+        margin-top: 10px;
+        font-size: 14px;
+        color: var(--muted);
+      }
+      #meta {
+        margin-top: 10px;
+        font-size: 13px;
+        color: var(--muted);
+      }
+      #sources div {
+        margin-bottom: 4px;
+      }
+      @media (max-width: 860px) {
+        .row.cols {
+          grid-template-columns: 1fr;
+        }
+      }
+    </style>
+  </head>
+  <body>
+    <div class="shell">
+      <h1>Audit Document Assistant</h1>
+      <div class="sub">Query station audits and filings with source paths.</div>
+      <div class="panel">
+        <form id="form">
+          <div class="row cols">
+            <select id="command">
+              <option value="summary">summary</option>
+              <option value="docs">docs</option>
+              <option value="risks">risks</option>
+              <option value="search">search</option>
+            </select>
+            <input id="query" placeholder="Station name, station id, or search phrase" />
+            <input id="model" value="gpt-4.1-mini" />
+            <select id="mode">
+              <option value="normal">normal</option>
+              <option value="strict">strict (risks)</option>
+              <option value="watchlist">watchlist (risks)</option>
+            </select>
+            <input id="limit" type="number" min="1" max="50" value="8" />
+            <button type="submit">Run</button>
+          </div>
+          <div class="row cols">
+            <input id="pathDate" placeholder="Path date filter YYYY-MM-DD (optional)" />
+            <div></div>
+            <div></div>
+            <div></div>
+            <div></div>
+          </div>
+        </form>
+        <div id="out">Ready.</div>
+        <div id="meta"></div>
+        <div id="sources"></div>
+      </div>
+    </div>
+    <script>
+      const form = document.getElementById("form");
+      const out = document.getElementById("out");
+      const metaEl = document.getElementById("meta");
+      const sourcesEl = document.getElementById("sources");
+
+      form.addEventListener("submit", async (event) => {
+        event.preventDefault();
+        const command = document.getElementById("command").value;
+        const query = document.getElementById("query").value.trim();
+        const model = document.getElementById("model").value.trim() || "gpt-4.1-mini";
+        const mode = document.getElementById("mode").value;
+        const limit = Number(document.getElementById("limit").value || 8);
+        const pathDate = document.getElementById("pathDate").value.trim();
+        if (!query) {
+          out.textContent = "Please enter a station or query.";
+          return;
+        }
+        const payload = {
+          command,
+          query,
+          limit,
+          strict: mode === "strict",
+          watchlist: mode === "watchlist",
+          path_date: pathDate || null,
+          model,
+        };
+        out.textContent = "Running query...";
+        metaEl.textContent = "";
+        sourcesEl.textContent = "";
+        try {
+          const response = await fetch("/api/query", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify(payload),
+          });
+          const data = await response.json();
+          if (!response.ok) {
+            out.textContent = `Error: ${data.detail || response.status}`;
+            return;
+          }
+          out.textContent = data.output || "No output.";
+          if (data.summary_mode) {
+            metaEl.textContent = `summary_mode: ${data.summary_mode}`;
+            if (data.summary_error) {
+              metaEl.textContent += ` | summary_error: ${data.summary_error}`;
+            }
+          }
+          if (Array.isArray(data.sources) && data.sources.length) {
+            sourcesEl.innerHTML = data.sources
+              .map((s) => `<div>[${s.source_id}] ${s.title} — <code>${s.file_path}</code></div>`)
+              .join("");
+          }
+        } catch (err) {
+          out.textContent = `Request failed: ${err}`;
+          metaEl.textContent = "";
+          sourcesEl.textContent = "";
+        }
+      });
+    </script>
+  </body>
+</html>
