@@ -34,7 +34,7 @@
       <key>PATH</key>
       <string>/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin</string>
       <key>SLACK_WEBHOOK_URL</key>
-      <string>https://hooks.slack.com/services/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</string>
+      <string>SET_IN_LOCAL_LAUNCHAGENT_ONLY</string>
       <key>AUDIT_WATCH_TIMEOUT_SECONDS</key>
       <string>20</string>
       <key>AUDIT_WATCH_NOTIFY_ON_NO_CHANGES</key>
