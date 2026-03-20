@@ -48,7 +48,18 @@
         gap: 8px;
       }
       .row.cols {
-        grid-template-columns: 1fr 1.2fr 1fr 1fr 1fr auto;
+        grid-template-columns: 0.9fr 1.4fr 1.2fr 0.9fr auto;
+      }
+      .row.ask-row {
+        grid-template-columns: 1fr;
+      }
+      .field {
+        display: grid;
+        gap: 6px;
+      }
+      .field label {
+        font-size: 13px;
+        color: var(--muted);
       }
       input,
       select,
@@ -95,29 +106,56 @@
   <body>
     <div class="shell">
       <h1>Audit Document Assistant</h1>
-      <div class="sub">Query station audits and filings with source paths.</div>
+      <div class="sub">Query station audits and filings across local archives and Semipublic, with source paths.</div>
       <div class="panel">
         <form id="form">
           <div class="row cols">
-            <select id="command">
-              <option value="summary">summary</option>
-              <option value="docs">docs</option>
-              <option value="risks">risks</option>
-              <option value="search">search</option>
-            </select>
-            <input id="query" placeholder="Station name, station id, or search phrase" />
-            <input id="model" value="gpt-4.1-mini" />
-            <select id="mode">
-              <option value="normal">normal</option>
-              <option value="strict">strict (risks)</option>
-              <option value="watchlist">watchlist (risks)</option>
-            </select>
-            <input id="limit" type="number" min="1" max="50" value="8" />
-            <button type="submit">Run</button>
+            <div class="field">
+              <label for="command">Mode</label>
+              <select id="command">
+                <option value="ask">ask</option>
+                <option value="summary">summary</option>
+                <option value="docs">docs</option>
+                <option value="risks">risks</option>
+                <option value="search">search</option>
+              </select>
+            </div>
+            <div class="field">
+              <label for="station">Station</label>
+              <input id="station" placeholder="Station name or id" />
+            </div>
+            <div class="field">
+              <label for="model">Model</label>
+              <input id="model" value="gpt-4.1-mini" />
+            </div>
+            <div class="field">
+              <label for="mode">Risk Mode</label>
+              <select id="mode">
+                <option value="normal">normal</option>
+                <option value="strict">strict (risks)</option>
+                <option value="watchlist">watchlist (risks)</option>
+              </select>
+            </div>
+            <div class="field">
+              <label>&nbsp;</label>
+              <button type="submit">Run</button>
+            </div>
+          </div>
+          <div class="row ask-row">
+            <div class="field">
+              <label for="query">Question / Query</label>
+              <input id="query" placeholder="Question for ask, or phrase for search" />
+            </div>
           </div>
           <div class="row cols">
-            <input id="pathDate" placeholder="Path date filter YYYY-MM-DD (optional)" />
-            <div></div>
+            <div class="field">
+              <label for="limit">Limit</label>
+              <input id="limit" type="number" min="1" max="50" value="8" />
+            </div>
+            <div class="field">
+              <label for="pathDate">Path Date Filter</label>
+              <input id="pathDate" placeholder="YYYY-MM-DD (optional)" />
+            </div>
             <div></div>
             <div></div>
             <div></div>
@@ -137,18 +175,30 @@
       form.addEventListener("submit", async (event) => {
         event.preventDefault();
         const command = document.getElementById("command").value;
+        const station = document.getElementById("station").value.trim();
         const query = document.getElementById("query").value.trim();
         const model = document.getElementById("model").value.trim() || "gpt-4.1-mini";
         const mode = document.getElementById("mode").value;
         const limit = Number(document.getElementById("limit").value || 8);
         const pathDate = document.getElementById("pathDate").value.trim();
-        if (!query) {
+        if (command === "ask") {
+          if (!station || !query) {
+            out.textContent = "Please enter both a station and a question.";
+            return;
+          }
+        } else if (command === "search") {
+          if (!query) {
+            out.textContent = "Please enter a search phrase.";
+            return;
+          }
+        } else if (!station && !query) {
           out.textContent = "Please enter a station or query.";
           return;
         }
         const payload = {
           command,
-          query,
+          query: command === "search" ? query : (command === "ask" ? query : (station || query)),
+          station: station || null,
           limit,
           strict: mode === "strict",
           watchlist: mode === "watchlist",
@@ -178,7 +228,7 @@
           }
           if (Array.isArray(data.sources) && data.sources.length) {
             sourcesEl.innerHTML = data.sources
-              .map((s) => `<div>[${s.source_id}] ${s.title} — <code>${s.file_path}</code></div>`)
+              .map((s) => `<div>[${s.source_id}] ${s.title} — ${s.source_label} :: ${s.source_path} — <code>${s.file_path}</code></div>`)
               .join("");
           }
         } catch (err) {

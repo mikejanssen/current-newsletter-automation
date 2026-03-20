@@ -102,6 +102,20 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
 
 def resolve_station_ids(conn, station_query: str) -> list[str]:
     q = station_query.strip().lower()
+    alias_rows = conn.execute(
+        """
+        SELECT DISTINCT canonical_station_id
+        FROM station_aliases
+        WHERE alias = ?
+           OR alias LIKE ?
+        ORDER BY canonical_station_name
+        """,
+        (q, f"%{q}%"),
+    ).fetchall()
+    alias_ids = [r["canonical_station_id"] for r in alias_rows]
+    if alias_ids:
+        return alias_ids
+
     rows = conn.execute(
         """
         SELECT DISTINCT canonical_station_id
@@ -126,7 +140,8 @@ def docs_for_station(conn, station_ids: list[str], limit: int):
     placeholders = ",".join(["?"] * len(station_ids))
     return conn.execute(
         f"""
-        SELECT canonical_station_id, canonical_station_name, title, file_path, file_mtime
+        SELECT canonical_station_id, canonical_station_name, source_label, source_path,
+               title, file_path, file_mtime
         FROM docs
         WHERE canonical_station_id IN ({placeholders})
         ORDER BY file_mtime DESC
@@ -153,6 +168,7 @@ def print_docs(rows) -> None:
         return
     for r in rows:
         print(f"- {r['canonical_station_name']} ({r['canonical_station_id']}): {r['title']}")
+        print(f"  corpus: {r['source_label']} :: {r['source_path']}")
         print(f"  source: `{r['file_path']}`")
 
 
@@ -169,6 +185,7 @@ def print_summary(rows) -> None:
     print("Recent docs:")
     for r in rows[:8]:
         print(f"- {r['title']}")
+        print(f"  corpus: {r['source_label']} :: {r['source_path']}")
         print(f"  source: `{r['file_path']}`")
 
 
@@ -248,6 +265,7 @@ def print_risks(
     strict: bool = False,
     watchlist: bool = False,
     explain: bool = False,
+    path_date: str = "",
 ) -> None:
     if not station_ids:
         print("No matching station.")
@@ -260,7 +278,8 @@ def print_risks(
         params.append(f"%/{path_date}/%")
     rows = conn.execute(
         f"""
-        SELECT canonical_station_id, canonical_station_name, title, file_path, content_text
+        SELECT canonical_station_id, canonical_station_name, source_label, source_path,
+               title, file_path, content_text
         FROM docs
         WHERE canonical_station_id IN ({placeholders}){where_extra}
         ORDER BY file_mtime DESC
@@ -334,6 +353,7 @@ def print_risks(
             print(f"  snippet: {explain_snip[:850]}...")
         else:
             print(f"  snippet: {snip[:220]}...")
+        print(f"  corpus: {r['source_label']} :: {r['source_path']}")
         print(f"  source: `{r['file_path']}`")
 
 
@@ -354,7 +374,8 @@ def collect_risks(
         params.append(f"%/{path_date}/%")
     rows = conn.execute(
         f"""
-        SELECT canonical_station_id, canonical_station_name, title, file_path, content_text
+        SELECT canonical_station_id, canonical_station_name, source_label, source_path,
+               title, file_path, content_text
         FROM docs
         WHERE canonical_station_id IN ({placeholders}){where_extra}
         ORDER BY file_mtime DESC
@@ -465,6 +486,7 @@ def run_risks_all(
                     f"- [{pat}] {r['canonical_station_name']} ({r['canonical_station_id']}) [{confidence}]"
                 )
                 lines.append(f"  snippet: {snip[:220]}...")
+                lines.append(f"  corpus: {r['source_label']} :: {r['source_path']}")
                 lines.append(f"  source: `{r['file_path']}`")
         else:
             lines.append("- None.")
@@ -476,6 +498,7 @@ def run_risks_all(
                     f"- [{pat}] {r['canonical_station_name']} ({r['canonical_station_id']}) [{confidence}]"
                 )
                 lines.append(f"  snippet: {snip[:220]}...")
+                lines.append(f"  corpus: {r['source_label']} :: {r['source_path']}")
                 lines.append(f"  source: `{r['file_path']}`")
         else:
             lines.append("- None.")
@@ -496,6 +519,8 @@ def run_risks_all(
                     "station_id": r["canonical_station_id"],
                     "station_name": r["canonical_station_name"],
                     "title": r["title"],
+                    "source_label": r["source_label"],
+                    "source_path": r["source_path"],
                     "source": r["file_path"],
                     "snippet": snip,
                     "confidence": confidence,
@@ -508,6 +533,8 @@ def run_risks_all(
                     "station_id": r["canonical_station_id"],
                     "station_name": r["canonical_station_name"],
                     "title": r["title"],
+                    "source_label": r["source_label"],
+                    "source_path": r["source_path"],
                     "source": r["file_path"],
                     "snippet": snip,
                     "confidence": confidence,
@@ -523,8 +550,9 @@ def run_risks_all(
 def print_search(conn, phrase: str, limit: int) -> None:
     rows = conn.execute(
         """
-        SELECT d.canonical_station_id, d.canonical_station_name, d.title, d.file_path,
-               snippet(docs_fts, 5, '[', ']', ' … ', 20) AS snippet
+        SELECT d.canonical_station_id, d.canonical_station_name, d.source_label, d.source_path,
+               d.title, d.file_path,
+               snippet(docs_fts, 7, '[', ']', ' … ', 20) AS snippet
         FROM docs_fts
         JOIN docs d ON d.rowid = docs_fts.rowid
         WHERE docs_fts MATCH ?
@@ -538,6 +566,7 @@ def print_search(conn, phrase: str, limit: int) -> None:
     for r in rows:
         print(f"- {r['canonical_station_name']} ({r['canonical_station_id']}): {r['title']}")
         print(f"  snippet: {r['snippet']}")
+        print(f"  corpus: {r['source_label']} :: {r['source_path']}")
         print(f"  source: `{r['file_path']}`")
 
 
@@ -545,53 +574,55 @@ def main(argv: list[str] | None = None) -> int:
     args = parse_args(argv)
     query_text = " ".join(args.query).strip()
     conn = connect(args.db)
+    try:
+        if args.command == "risks-all":
+            return run_risks_all(
+                conn,
+                limit=args.limit,
+                path_date=args.path_date.strip(),
+                out=args.out.strip(),
+                json_out=args.json_out.strip(),
+            )
 
-    if args.command == "risks-all":
-        return run_risks_all(
-            conn,
-            limit=args.limit,
-            path_date=args.path_date.strip(),
-            out=args.out.strip(),
-            json_out=args.json_out.strip(),
-        )
+        if args.command == "search":
+            if not query_text:
+                print("search requires a query phrase")
+                return 2
+            print_search(conn, query_text, args.limit)
+            return 0
 
-    if args.command == "search":
         if not query_text:
-            print("search requires a query phrase")
+            print(f"{args.command} requires a station query")
             return 2
-        print_search(conn, query_text, args.limit)
-        return 0
 
-    if not query_text:
-        print(f"{args.command} requires a station query")
-        return 2
+        station_ids = resolve_station_ids(conn, query_text)
+        if not station_ids:
+            print(f"No station match for: {query_text}")
+            return 1
 
-    station_ids = resolve_station_ids(conn, query_text)
-    if not station_ids:
-        print(f"No station match for: {query_text}")
-        return 1
+        if args.command == "docs":
+            rows = docs_for_station(conn, station_ids, args.limit)
+            print_docs(rows)
+            return 0
 
-    if args.command == "docs":
-        rows = docs_for_station(conn, station_ids, args.limit)
-        print_docs(rows)
-        return 0
+        if args.command == "summary":
+            rows = docs_for_station(conn, station_ids, max(args.limit, 20))
+            print_summary(rows)
+            return 0
 
-    if args.command == "summary":
-        rows = docs_for_station(conn, station_ids, max(args.limit, 20))
-        print_summary(rows)
-        return 0
-
-    if args.command == "risks":
-        print_risks(
-            conn,
-            station_ids,
-            args.limit,
-            strict=args.strict,
-            watchlist=args.watchlist,
-            explain=args.explain,
-            path_date=args.path_date.strip(),
-        )
-        return 0
+        if args.command == "risks":
+            print_risks(
+                conn,
+                station_ids,
+                args.limit,
+                strict=args.strict,
+                watchlist=args.watchlist,
+                explain=args.explain,
+                path_date=args.path_date.strip(),
+            )
+            return 0
+    finally:
+        conn.close()
 
     return 0
 

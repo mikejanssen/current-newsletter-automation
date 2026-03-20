@@ -1,9 +1,14 @@
 **/.env
+**/.env.local
+**/.env.*.local
 __pycache__/
 *.py[cod]
 .DS_Store
+*.db-shm
+*.db-wal
 projects/newsletter/output/*.html
 projects/newsletter/output/*.log
 projects/newsletter/output/newsletter-state.json
 projects/newsletter/output/monthly-pageviews-*.txt
 **/.env
+projects/audit-chatbot/data/
