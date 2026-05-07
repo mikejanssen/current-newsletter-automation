@@ -44,6 +44,15 @@ Live non-mutating WRVO PN validation also passed as a dry run:
 - `slack_status`: `dry_run`
 - `state_updated`: `false`
 
+Operational checks passed on 2026-05-07:
+
+- `com.current.fcc-lms-watch.daily` is loaded from `~/Library/LaunchAgents/com.current.fcc-lms-watch.daily.plist`.
+- Daily LMS job schedule: 9:00 a.m.; launchctl shows `runs = 3` and `last exit code = 0`.
+- `com.current.fcc-lms-pn-watch.daily` is loaded from `~/Library/LaunchAgents/com.current.fcc-lms-pn-watch.daily.plist`.
+- PN job schedule: 10:30 a.m.; launchctl shows `runs = 0` and `last exit code = (never exited)`, which is expected before its first scheduled run.
+- `scripts/run-validation.sh` passed dry-run with WNED-FM file `0000288968`.
+- `scripts/run-pn-validation.sh` passed dry-run with WRVO file `0000296158`.
+
 ## Known Limitations
 
 - FCC LMS Application Search can still hang or fail in the browser/export path. Manual week scan on 2026-05-06 completed PN and Assignment/Transfer parsing, but Application Search was inconclusive.
