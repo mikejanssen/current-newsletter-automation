@@ -25,6 +25,7 @@ Monitor RSS/Atom feeds for public-broadcasting story leads and post concise Slac
 - Added `slack_status`, `slack_error`, and `state_updated` to run payloads.
 - Updated `scripts/run-rss-watch.sh` to prefer the workspace Python.
 - Staggered morning LaunchAgent template to 8:45 a.m., away from 9:00 FCC LMS jobs.
+- Tuned scoring to strip HTML from summaries before matching, avoid fake call-sign/departure boosts from HTML attributes, preserve public-media commentary, and surface public-media leadership appointments.
 
 ## Validation
 
@@ -54,6 +55,7 @@ Validation completed on 2026-05-07:
 - Both launchd templates passed `plutil -lint`.
 - Live bounded dry run with 10 feeds completed with 0 feed failures, 2 candidates, `slack_status = dry_run`, and `state_updated = false`.
 - Installed morning LaunchAgent was updated to 8:45 a.m. while preserving the local Slack webhook; `launchctl print gui/501/com.current.rss-watch.morning` shows it loaded, not running, with `runs = 0` after reload.
+- Scoring validation on a 72-hour dry run completed with 66 feeds, 5 feed failures, 99 candidates, 2 maybe items, `slack_status = dry_run`, and `state_updated = false`. The previous generic radio/music-industry false positives no longer appeared as high/maybe, while public-media commentary and a public-media appointment remained visible.
 
 ## Known Limitations
 

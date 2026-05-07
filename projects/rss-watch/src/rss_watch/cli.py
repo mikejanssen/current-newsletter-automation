@@ -3,6 +3,7 @@ from __future__ import annotations
 import argparse
 from concurrent.futures import ThreadPoolExecutor, as_completed
 import hashlib
+import html
 import json
 import os
 import re
@@ -65,6 +66,34 @@ HIGH_SIGNAL_TERMS = [
     "board chair",
 ]
 
+COMMENTARY_TERMS = [
+    "commentary",
+    "opinion",
+    "analysis",
+    "editorial",
+    "column",
+    "argue",
+    "argues",
+    "case for",
+    "case against",
+]
+
+PUBLIC_MEDIA_POLICY_TERMS = [
+    "editorial independence",
+    "local journalism",
+    "local news",
+    "public service media",
+    "federal funding",
+    "state funding",
+    "public funding",
+    "funding cuts",
+    "rescission",
+    "license",
+    "fcc",
+    "board",
+    "governance",
+]
+
 MANAGEMENT_CHANGE_TERMS = [
     "gm",
     "manager",
@@ -76,6 +105,24 @@ MANAGEMENT_CHANGE_TERMS = [
     "chair",
     "leadership",
     "leadership team",
+]
+
+LEADERSHIP_APPOINTMENT_TERMS = [
+    "appoint",
+    "appoints",
+    "appointed",
+    "name",
+    "names",
+    "named",
+    "hire",
+    "hires",
+    "hired",
+    "succeed",
+    "succeeds",
+    "succeeded",
+    "promote",
+    "promotes",
+    "promoted",
 ]
 
 DEPARTURE_TERMS = [
@@ -218,6 +265,10 @@ LOW_SIGNAL_DOMAINS = {
     "www.flickr.com",
     "tiktok.com",
     "www.tiktok.com",
+    "twitter.com",
+    "www.twitter.com",
+    "x.com",
+    "www.x.com",
 }
 
 SUPPRESSED_DOMAINS = {
@@ -349,9 +400,42 @@ def _has_any_term(text: str, terms: Iterable[str]) -> bool:
     return any(_has_term(text, term) for term in terms)
 
 
+def _plain_text(value: str) -> str:
+    unescaped = html.unescape(value or "")
+    without_tags = re.sub(r"<[^>]+>", " ", unescaped)
+    return " ".join(without_tags.split())
+
+
 def _looks_like_named_person(title: str) -> bool:
     tokens = re.findall(r"\b[A-Z][a-z]+(?:[-'][A-Z][a-z]+)?\b", title)
     return len(tokens) >= 2
+
+
+def _has_us_call_sign(text: str) -> bool:
+    for match in re.finditer(r"\b[KW][A-Z]{2,4}(?:-(?:FM|TV|DT|AM|LP|LD|CD))?\b", text):
+        token = match.group(0)
+        if token in {"WKRP"}:
+            continue
+        return True
+    return False
+
+
+def _has_substantive_public_media_signal(text: str) -> bool:
+    return _has_any_term(
+        text,
+        CORE_KEYWORDS[:4]
+        + WEAK_BRAND_KEYWORDS
+        + CRITICAL_TERMS
+        + PUBLIC_MEDIA_POLICY_TERMS
+        + ["station", "newsroom"],
+    )
+
+
+def _is_public_media_commentary(text: str) -> bool:
+    has_public_media = _has_any_term(text, CORE_KEYWORDS[:4] + WEAK_BRAND_KEYWORDS)
+    has_commentary = _has_any_term(text, COMMENTARY_TERMS)
+    has_policy_or_operation = _has_any_term(text, PUBLIC_MEDIA_POLICY_TERMS + CRITICAL_TERMS)
+    return has_public_media and (has_commentary or has_policy_or_operation)
 
 
 def _iter_outline_nodes(root: ET.Element) -> Iterable[ET.Element]:
@@ -445,7 +529,7 @@ def _parse_feed_xml(xml_text: str, default_feed_title: str) -> list[FeedItem]:
 
 
 def _score_item(title: str, summary: str, domain: str, published: datetime | None) -> tuple[int, list[str]]:
-    raw_text = f"{title} {summary}"
+    raw_text = _plain_text(f"{title} {summary}")
     text = raw_text.lower()
     title_text = title.lower()
     score = 0
@@ -453,7 +537,7 @@ def _score_item(title: str, summary: str, domain: str, published: datetime | Non
     core_public_hits = [term for term in CORE_KEYWORDS[:4] if _has_term(text, term)]
     weak_brand_hits = [term for term in WEAK_BRAND_KEYWORDS if _has_term(text, term)]
     us_term_hit = _has_any_term(text, US_SIGNAL_TERMS)
-    us_callsign_hit = bool(re.search(r"\b[KW][A-Z]{2,4}(?:-(?:FM|TV|DT|AM))?\b", raw_text))
+    us_callsign_hit = _has_us_call_sign(raw_text)
     station_operation_disruption = _has_any_term(text, STATION_OPERATION_TERMS) and _has_any_term(
         text, OPERATION_DISRUPTION_TERMS
     )
@@ -480,9 +564,15 @@ def _score_item(title: str, summary: str, domain: str, published: datetime | Non
         if _has_term(text, term):
             score += 2
             reasons.append(f"high-signal:{term}")
+    if _is_public_media_commentary(text):
+        score += 2
+        reasons.append("public-media-commentary")
     if core_public_hits and _has_any_term(text, MANAGEMENT_CHANGE_TERMS) and _has_any_term(text, DEPARTURE_TERMS):
         score += 3
         reasons.append("public-media-management-change")
+    if core_public_hits and _has_any_term(text, LEADERSHIP_APPOINTMENT_TERMS) and _looks_like_named_person(title):
+        score += 2
+        reasons.append("public-media-leadership-appointment")
     if us_callsign_hit and _has_any_term(text, MANAGEMENT_CHANGE_TERMS) and _has_any_term(text, DEPARTURE_TERMS):
         score += 5
         reasons.append("callsign+management-departure")
@@ -509,7 +599,7 @@ def _score_item(title: str, summary: str, domain: str, published: datetime | Non
     if re.fullmatch(r"\d{8}_\d+(?:\(\d+\))?", title.strip()):
         score -= 4
         reasons.append("likely-media-dump-title")
-    strong_or_critical = _has_any_term(text, CORE_KEYWORDS[:4] + CRITICAL_TERMS + ["cpb", "station"])
+    strong_or_critical = _has_any_term(text, CORE_KEYWORDS[:4] + CRITICAL_TERMS + PUBLIC_MEDIA_POLICY_TERMS + ["station"])
     strong_or_critical = strong_or_critical or station_operation_disruption
     if weak_brand_hits and not strong_or_critical:
         score -= 3
@@ -605,10 +695,17 @@ def dedupe_and_rank(
             continue
 
         score, reasons = _score_item(raw.title, raw.summary, domain, published)
-        text = f"{raw.title} {raw.summary}".lower()
-        if source_hint_domain in LOW_SIGNAL_DOMAINS and not _has_any_term(text, CRITICAL_TERMS):
-            score -= 4
-            reasons.append(f"social-source:{source_hint_domain}")
+        text = _plain_text(f"{raw.title} {raw.summary}").lower()
+        if source_hint_domain in LOW_SIGNAL_DOMAINS:
+            if _is_public_media_commentary(text):
+                score -= 1
+                reasons.append(f"social-source-commentary:{source_hint_domain}")
+            elif not _has_substantive_public_media_signal(text):
+                score -= 5
+                reasons.append(f"weak-social-source:{source_hint_domain}")
+            else:
+                score -= 3
+                reasons.append(f"social-source:{source_hint_domain}")
         bucket = _bucket_for_score(score)
         entry = dedup.get(dedupe_key)
         if entry is None:
