@@ -1,0 +1,2 @@
+"""RSS Watch package."""
+
