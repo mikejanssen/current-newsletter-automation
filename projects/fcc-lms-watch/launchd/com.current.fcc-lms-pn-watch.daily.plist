@@ -3,12 +3,12 @@
 <plist version="1.0">
   <dict>
     <key>Label</key>
-    <string>com.current.fcc-lms-watch.daily</string>
+    <string>com.current.fcc-lms-pn-watch.daily</string>
 
     <key>ProgramArguments</key>
     <array>
       <string>/bin/zsh</string>
-      <string>/Users/jansen/Current Dropbox/Mike Janssen/my-assistant/projects/fcc-lms-watch/scripts/run-daily-scan.sh</string>
+      <string>/Users/jansen/Current Dropbox/Mike Janssen/my-assistant/projects/fcc-lms-watch/scripts/run-pn-scan.sh</string>
     </array>
 
     <key>WorkingDirectory</key>
@@ -17,19 +17,21 @@
     <key>StartCalendarInterval</key>
     <dict>
       <key>Hour</key>
-      <integer>9</integer>
+      <integer>10</integer>
       <key>Minute</key>
-      <integer>0</integer>
+      <integer>30</integer>
     </dict>
 
     <key>StandardOutPath</key>
-    <string>/Users/jansen/Current Dropbox/Mike Janssen/my-assistant/projects/fcc-lms-watch/output/launchd-daily.out.log</string>
+    <string>/Users/jansen/Current Dropbox/Mike Janssen/my-assistant/projects/fcc-lms-watch/output/launchd-pn-daily.out.log</string>
     <key>StandardErrorPath</key>
-    <string>/Users/jansen/Current Dropbox/Mike Janssen/my-assistant/projects/fcc-lms-watch/output/launchd-daily.err.log</string>
+    <string>/Users/jansen/Current Dropbox/Mike Janssen/my-assistant/projects/fcc-lms-watch/output/launchd-pn-daily.err.log</string>
 
     <key>EnvironmentVariables</key>
     <dict>
       <key>FCC_LMS_BROWSER_FALLBACK</key>
+      <string>1</string>
+      <key>FCC_LMS_PN_DATE_PAGE_FALLBACK</key>
       <string>1</string>
       <key>FCC_LMS_REQUEST_RETRIES</key>
       <string>0</string>
