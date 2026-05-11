@@ -5,6 +5,7 @@ PROJECT_DIR="/Users/jansen/Current Dropbox/Mike Janssen/my-assistant/projects/au
 cd "$PROJECT_DIR"
 
 : "${AUDIT_WATCH_TIMEOUT_SECONDS:=20}"
+: "${AUDIT_WATCH_WORKERS:=8}"
 : "${AUDIT_WATCH_SLACK_MAX_NEW_DOCS:=5}"
 : "${AUDIT_WATCH_SLACK_MAX_FAILURES:=10}"
 : "${AUDIT_WATCH_SLACK_MAX_STRICT_RISKS:=5}"
@@ -20,6 +21,7 @@ PYTHONPATH=src python3 -m audit_watch.cli run-and-notify \
   --failures-out output/fetch-failures.json \
   --archive-root output/audits \
   --timeout-seconds "$AUDIT_WATCH_TIMEOUT_SECONDS" \
+  --workers "$AUDIT_WATCH_WORKERS" \
   --audit-chatbot-db "$AUDIT_CHATBOT_DB" \
   --risk-limit "$AUDIT_CHATBOT_RISK_LIMIT" \
   --risk-brief output/risk-briefing.md \

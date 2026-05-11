@@ -1060,6 +1060,8 @@ def build_payload(
     stations_scanned: int | None = None,
     stations_skipped: int | None = None,
     documents_discovered: int | None = None,
+    documents_archived: int | None = None,
+    scan_status: str = "completed",
 ) -> dict:
     flagged = [d for d in new_docs if d.flags.strip()]
     payload = {
@@ -1074,8 +1076,9 @@ def build_payload(
             "stations_scanned": stations_scanned,
             "stations_skipped": stations_skipped,
             "documents_discovered": documents_discovered,
+            "documents_archived": documents_archived,
         },
-        "scan_status": "completed",
+        "scan_status": scan_status,
         "new_documents": [
             {
                 "doc_id": d.doc_id,
@@ -1084,6 +1087,7 @@ def build_payload(
                 "title": d.title,
                 "document_url": d.document_url,
                 "downloaded_path": d.downloaded_path,
+                "status": d.status,
                 "flags": d.flags,
                 "summary": d.summary,
                 "confidence": d.confidence,

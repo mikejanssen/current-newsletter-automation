@@ -27,8 +27,12 @@ PYTHONPATH=src python3 -m audit_watch.cli daily-run \
   --brief output/briefing.md \
   --failures-out output/fetch-failures.json \
   --health-out output/health.json \
-  --archive-root output/audits
+  --archive-root output/audits \
+  --workers 8
 ```
+
+Station page fetches and new-document downloads run with bounded parallelism. Use
+`--workers N` or `AUDIT_WATCH_WORKERS=N` to tune concurrency.
 
 Run the production path, including audit-chatbot risk rollup, health output, and Slack notification:
 
@@ -48,6 +52,20 @@ Validate station config:
 ```bash
 PYTHONPATH=src python3 -m audit_watch.cli validate-stations \
   --stations config/stations.csv
+```
+
+Fast live validation without archive downloads or state updates:
+
+```bash
+PYTHONPATH=src python3 -m audit_watch.cli daily-run \
+  --stations config/stations.csv \
+  --state /tmp/audit-watch-state.json \
+  --out /tmp/audit-watch-last-run.json \
+  --brief /tmp/audit-watch-briefing.md \
+  --failures-out /tmp/audit-watch-failures.json \
+  --health-out /tmp/audit-watch-health.json \
+  --archive-root /tmp/audit-watch-audits \
+  --no-archive
 ```
 
 Discover likely page URLs for unresolved stations:
@@ -136,6 +154,7 @@ PYTHONPATH=src python3 -m audit_watch.cli daily-run \
   --failures-out /tmp/audit-watch-failures.json \
   --health-out /tmp/audit-watch-health.json \
   --archive-root /tmp/audit-watch-audits \
+  --no-archive \
   --dry-run
 ```
 

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import argparse
+from concurrent.futures import ThreadPoolExecutor, as_completed
 import json
 import os
 from pathlib import Path
@@ -8,6 +9,7 @@ import subprocess
 import sys
 from urllib.request import Request, urlopen
 
+from .models import AuditDocument, StationRecord
 from .core import (
     ValidationError,
     archive_document,
@@ -44,6 +46,9 @@ def _build_parser() -> argparse.ArgumentParser:
     daily.add_argument("--dry-run", action="store_true", help="Do not update state file")
     daily.add_argument("--health-out", default="output/health.json")
     daily.add_argument("--max-stations", type=int, help="Optional cap for bounded validation runs")
+    daily.add_argument("--workers", type=int, default=int(os.environ.get("AUDIT_WATCH_WORKERS", "8")))
+    daily.add_argument("--discover-only", action="store_true", help="Fetch station pages but do not archive or update state")
+    daily.add_argument("--no-archive", action="store_true", help="Do not download documents or update state")
 
     discover = subparsers.add_parser(
         "discover-pages",
@@ -77,6 +82,9 @@ def _build_parser() -> argparse.ArgumentParser:
     notify.add_argument("--archive-root", default="output/audits")
     notify.add_argument("--timeout-seconds", type=int, default=int(os.environ.get("AUDIT_WATCH_TIMEOUT_SECONDS", "20")))
     notify.add_argument("--max-stations", type=int, help="Optional cap for bounded validation runs")
+    notify.add_argument("--workers", type=int, default=int(os.environ.get("AUDIT_WATCH_WORKERS", "8")))
+    notify.add_argument("--discover-only", action="store_true", help="Fetch station pages but do not archive, update state, run risk, or post Slack")
+    notify.add_argument("--no-archive", action="store_true", help="Do not download documents, update state, run risk, or post Slack")
     notify.add_argument("--audit-chatbot-db", default=os.environ.get("AUDIT_CHATBOT_DB", "../audit-chatbot/output/audit-chatbot.db"))
     notify.add_argument("--risk-brief", default="output/risk-briefing.md")
     notify.add_argument("--risk-json-out", default="output/risk-briefing.json")
@@ -97,6 +105,38 @@ def _build_parser() -> argparse.ArgumentParser:
     return parser
 
 
+def _bounded_workers(requested: int, item_count: int) -> int:
+    return max(1, min(max(1, requested), max(1, item_count)))
+
+
+def _discover_station(station: StationRecord, timeout_seconds: int) -> tuple[list[AuditDocument], dict[str, str] | None]:
+    try:
+        return discover_station_docs(station, timeout_seconds=timeout_seconds), None
+    except Exception as exc:  # pragma: no cover
+        return [], {
+            "station_id": station.station_id,
+            "station_name": station.station_name,
+            "page_url": station.page_url,
+            "error": str(exc),
+        }
+
+
+def _archive_new_doc(doc: AuditDocument, archive_root: Path, timeout_seconds: int) -> tuple[AuditDocument | None, dict[str, str] | None]:
+    try:
+        return archive_document(
+            doc,
+            archive_root=archive_root,
+            timeout_seconds=timeout_seconds,
+        ), None
+    except Exception as exc:  # pragma: no cover
+        return None, {
+            "station_id": doc.station_id,
+            "station_name": doc.station_name,
+            "page_url": doc.page_url,
+            "error": f"download/archive failed for {doc.document_url}: {exc}",
+        }
+
+
 def _run_daily_scan(args: argparse.Namespace) -> dict:
     started_at = utc_now_iso()
     stations = load_stations(Path(args.stations))
@@ -110,42 +150,42 @@ def _run_daily_scan(args: argparse.Namespace) -> dict:
     discovered = []
     failures: list[dict[str, str]] = []
 
-    for station in runnable_stations:
-        try:
-            station_docs = discover_station_docs(station, timeout_seconds=args.timeout_seconds)
+    station_workers = _bounded_workers(args.workers, len(runnable_stations))
+    with ThreadPoolExecutor(max_workers=station_workers) as executor:
+        futures = {
+            executor.submit(_discover_station, station, args.timeout_seconds): station.station_id
+            for station in runnable_stations
+        }
+        for future in as_completed(futures):
+            station_docs, failure = future.result()
             discovered.extend(station_docs)
-        except Exception as exc:  # pragma: no cover
-            failures.append(
-                {
-                    "station_id": station.station_id,
-                    "station_name": station.station_name,
-                    "page_url": station.page_url,
-                    "error": str(exc),
-                }
-            )
+            if failure:
+                failures.append(failure)
 
     by_id = {d.doc_id: d for d in discovered}
     new_docs = [d for d in by_id.values() if d.doc_id not in seen_ids]
     new_docs = sorted(new_docs, key=lambda d: (d.station_name, d.title, d.document_url))
 
+    archive_enabled = not (args.discover_only or args.no_archive)
     archived_docs = []
-    for doc in new_docs:
-        try:
-            archived = archive_document(
-                doc,
-                archive_root=Path(args.archive_root),
-                timeout_seconds=args.timeout_seconds,
-            )
-            archived_docs.append(archived)
-        except Exception as exc:  # pragma: no cover
-            failures.append(
-                {
-                    "station_id": doc.station_id,
-                    "station_name": doc.station_name,
-                    "page_url": doc.page_url,
-                    "error": f"download/archive failed for {doc.document_url}: {exc}",
-                }
-            )
+    if archive_enabled:
+        doc_workers = _bounded_workers(args.workers, len(new_docs))
+        with ThreadPoolExecutor(max_workers=doc_workers) as executor:
+            futures = {
+                executor.submit(_archive_new_doc, doc, Path(args.archive_root), args.timeout_seconds): doc.doc_id
+                for doc in new_docs
+            }
+            for future in as_completed(futures):
+                archived, failure = future.result()
+                if archived:
+                    archived_docs.append(archived)
+                if failure:
+                    failures.append(failure)
+        archived_docs = sorted(archived_docs, key=lambda d: (d.station_name, d.title, d.document_url))
+    else:
+        archived_docs = new_docs
+
+    failures = sorted(failures, key=lambda f: (f.get("station_name", ""), f.get("page_url", ""), f.get("error", "")))
 
     finished_at = utc_now_iso()
     payload = build_payload(
@@ -157,6 +197,8 @@ def _run_daily_scan(args: argparse.Namespace) -> dict:
         stations_scanned=len(runnable_stations),
         stations_skipped=len(skipped_stations),
         documents_discovered=len(discovered),
+        documents_archived=len(archived_docs) if archive_enabled else 0,
+        scan_status="completed" if archive_enabled else "discovered",
     )
     write_json(Path(args.out), payload)
     write_brief(Path(args.brief), payload)
@@ -176,7 +218,7 @@ def _run_daily_scan(args: argparse.Namespace) -> dict:
     }
     write_json(Path(args.failures_out), failures_payload)
 
-    if not args.dry_run:
+    if archive_enabled and not args.dry_run:
         new_seen = set(seen_ids)
         for doc in archived_docs:
             new_seen.add(doc.doc_id)
@@ -206,6 +248,8 @@ def _run_daily_scan(args: argparse.Namespace) -> dict:
         "stations_skipped": len(skipped_stations),
         "documents_discovered": len(discovered),
         "archived_docs": archived_docs,
+        "archive_enabled": archive_enabled,
+        "workers": station_workers,
     }
 
 
@@ -218,7 +262,10 @@ def _cmd_daily_run(args: argparse.Namespace) -> int:
     print(f"Stations scanned: {result['stations_scanned']}")
     print(f"Stations skipped: {result['stations_skipped']}")
     print(f"Discovered candidate documents: {result['documents_discovered']}")
-    print(f"New documents archived: {payload['counts']['new_documents']}")
+    print(f"New documents found: {payload['counts']['new_documents']}")
+    print(f"Documents archived: {payload['counts'].get('documents_archived', 0)}")
+    print(f"Archive enabled: {result['archive_enabled']}")
+    print(f"Workers: {result['workers']}")
     print(f"Fetch/archive failures: {failures_payload['failure_count']}")
     print(f"Wrote run JSON: {args.out}")
     print(f"Wrote briefing: {args.brief}")
@@ -363,7 +410,10 @@ def _cmd_run_and_notify(args: argparse.Namespace) -> int:
     failures_payload = scan_result["failures_payload"]
     run_date = str(run_payload.get("run_date", "")).strip()
 
-    risk_status, risk_payload, risk_error = _run_audit_chatbot(args, run_date)
+    if scan_result["archive_enabled"]:
+        risk_status, risk_payload, risk_error = _run_audit_chatbot(args, run_date)
+    else:
+        risk_status, risk_payload, risk_error = "not_attempted", {}, "archive disabled"
 
     counts = run_payload.get("counts", {})
     should_notify = args.notify_on_no_changes or any(
@@ -378,6 +428,8 @@ def _cmd_run_and_notify(args: argparse.Namespace) -> int:
     slack_error = ""
     if args.dry_run:
         slack_status = "dry_run"
+    elif not scan_result["archive_enabled"]:
+        slack_status = "skipped_validation"
     elif not args.slack_webhook.strip():
         slack_status = "not_configured"
     elif should_notify:
@@ -418,7 +470,10 @@ def _cmd_run_and_notify(args: argparse.Namespace) -> int:
     print(f"Stations scanned: {scan_result['stations_scanned']}")
     print(f"Stations skipped: {scan_result['stations_skipped']}")
     print(f"Discovered candidate documents: {scan_result['documents_discovered']}")
-    print(f"New documents archived: {counts.get('new_documents', 0)}")
+    print(f"New documents found: {counts.get('new_documents', 0)}")
+    print(f"Documents archived: {counts.get('documents_archived', 0)}")
+    print(f"Archive enabled: {scan_result['archive_enabled']}")
+    print(f"Workers: {scan_result['workers']}")
     print(f"Fetch/archive failures: {failures_payload['failure_count']}")
     print(f"Risk status: {risk_status}")
     print(f"Slack status: {slack_status}")
