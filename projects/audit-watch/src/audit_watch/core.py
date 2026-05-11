@@ -6,7 +6,7 @@ import json
 import re
 import subprocess
 from base64 import b64decode
-from datetime import date, datetime
+from datetime import date, datetime, timezone
 from html.parser import HTMLParser
 from pathlib import Path
 from urllib.error import HTTPError
@@ -464,7 +464,7 @@ def load_state(path: Path) -> set[str]:
 def save_state(path: Path, seen_doc_ids: set[str]) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     payload = {
-        "updated_at": datetime.utcnow().isoformat() + "Z",
+        "updated_at": utc_now_iso(),
         "seen_doc_ids": sorted(seen_doc_ids),
     }
     path.write_text(json.dumps(payload, indent=2), encoding="utf-8")
@@ -473,6 +473,128 @@ def save_state(path: Path, seen_doc_ids: set[str]) -> None:
 def write_json(path: Path, payload: dict) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(json.dumps(payload, indent=2), encoding="utf-8")
+
+
+def utc_now_iso() -> str:
+    return datetime.now(timezone.utc).isoformat()
+
+
+def validate_station_records(stations: list[StationRecord]) -> dict:
+    duplicate_ids = sorted(
+        station_id
+        for station_id in {s.station_id for s in stations}
+        if sum(1 for s in stations if s.station_id == station_id) > 1
+    )
+    malformed_urls = [
+        {
+            "station_id": s.station_id,
+            "station_name": s.station_name,
+            "page_url": s.page_url,
+            "reason": "page_url must start with http:// or https://",
+        }
+        for s in stations
+        if s.page_url.strip() and urlparse(s.page_url).scheme not in {"http", "https"}
+    ]
+    disabled_with_page_url = [
+        {"station_id": s.station_id, "station_name": s.station_name, "page_url": s.page_url}
+        for s in stations
+        if not s.enabled and s.page_url.strip()
+    ]
+    enabled_without_page_url = [
+        {"station_id": s.station_id, "station_name": s.station_name}
+        for s in stations
+        if s.enabled and not s.page_url.strip()
+    ]
+    return {
+        "station_count": len(stations),
+        "enabled_count": sum(1 for s in stations if s.enabled),
+        "enabled_with_page_url_count": sum(1 for s in stations if s.enabled and s.page_url.strip()),
+        "disabled_count": sum(1 for s in stations if not s.enabled),
+        "duplicate_station_ids": duplicate_ids,
+        "malformed_urls": malformed_urls,
+        "disabled_with_page_url": disabled_with_page_url,
+        "enabled_without_page_url": enabled_without_page_url,
+        "issue_count": len(duplicate_ids) + len(malformed_urls) + len(enabled_without_page_url),
+    }
+
+
+def summarize_failures(failures: list[dict[str, str]]) -> dict:
+    by_station: dict[str, dict] = {}
+    by_type: dict[str, int] = {}
+    for failure in failures:
+        station_id = failure.get("station_id", "unknown")
+        station_name = failure.get("station_name") or station_id
+        error = failure.get("error", "")
+        if "HTTP Error 404" in error:
+            failure_type = "http_404"
+        elif "CERTIFICATE_VERIFY_FAILED" in error:
+            failure_type = "ssl_certificate"
+        elif "timed out" in error.lower() or "timeout" in error.lower():
+            failure_type = "timeout"
+        elif "download/archive failed" in error:
+            failure_type = "archive"
+        else:
+            failure_type = "other"
+        by_type[failure_type] = by_type.get(failure_type, 0) + 1
+        entry = by_station.setdefault(
+            station_id,
+            {
+                "station_id": station_id,
+                "station_name": station_name,
+                "count": 0,
+                "types": {},
+                "last_error": "",
+                "page_url": failure.get("page_url", ""),
+            },
+        )
+        entry["count"] += 1
+        entry["types"][failure_type] = entry["types"].get(failure_type, 0) + 1
+        entry["last_error"] = error
+        if failure.get("page_url"):
+            entry["page_url"] = failure["page_url"]
+    stations = sorted(by_station.values(), key=lambda i: (-i["count"], i["station_name"]))
+    return {
+        "failure_count": len(failures),
+        "station_failure_count": len(by_station),
+        "by_type": dict(sorted(by_type.items())),
+        "by_station": stations,
+    }
+
+
+def build_health_payload(
+    *,
+    run_payload: dict,
+    failures_payload: dict,
+    risk_payload: dict,
+    started_at: str,
+    finished_at: str,
+    scan_status: str,
+    risk_status: str,
+    slack_status: str,
+    risk_error: str = "",
+    slack_error: str = "",
+) -> dict:
+    counts = run_payload.get("counts") or {}
+    failures = failures_payload.get("failures") or run_payload.get("failures") or []
+    return {
+        "updated_at": finished_at,
+        "last_run_date": run_payload.get("run_date"),
+        "started_at": started_at,
+        "finished_at": finished_at,
+        "scan_status": scan_status,
+        "risk_status": risk_status,
+        "risk_error": risk_error,
+        "slack_status": slack_status,
+        "slack_error": slack_error,
+        "counts": {
+            "new_documents": counts.get("new_documents", 0),
+            "flagged_documents": counts.get("flagged_documents", 0),
+            "stations_with_failures": counts.get("stations_with_failures", 0),
+            "strict_risk_stations": risk_payload.get("strict_station_count", 0) or 0,
+            "watchlist_risk_stations": risk_payload.get("watchlist_station_count", 0) or 0,
+        },
+        "failure_summary": summarize_failures(failures),
+    }
 
 
 def _open_url(url: str, *, timeout_seconds: int):
@@ -928,15 +1050,32 @@ def archive_document(
     )
 
 
-def build_payload(new_docs: list[AuditDocument], failures: list[dict[str, str]]) -> dict:
+def build_payload(
+    new_docs: list[AuditDocument],
+    failures: list[dict[str, str]],
+    *,
+    started_at: str | None = None,
+    finished_at: str | None = None,
+    stations_total: int | None = None,
+    stations_scanned: int | None = None,
+    stations_skipped: int | None = None,
+    documents_discovered: int | None = None,
+) -> dict:
     flagged = [d for d in new_docs if d.flags.strip()]
-    return {
+    payload = {
         "run_date": date.today().isoformat(),
+        "started_at": started_at,
+        "finished_at": finished_at,
         "counts": {
             "new_documents": len(new_docs),
             "flagged_documents": len(flagged),
             "stations_with_failures": len({f["station_id"] for f in failures}),
+            "stations_total": stations_total,
+            "stations_scanned": stations_scanned,
+            "stations_skipped": stations_skipped,
+            "documents_discovered": documents_discovered,
         },
+        "scan_status": "completed",
         "new_documents": [
             {
                 "doc_id": d.doc_id,
@@ -953,6 +1092,14 @@ def build_payload(new_docs: list[AuditDocument], failures: list[dict[str, str]])
         ],
         "failures": failures,
     }
+    if started_at and finished_at:
+        try:
+            started = datetime.fromisoformat(started_at)
+            finished = datetime.fromisoformat(finished_at)
+            payload["duration_seconds"] = round((finished - started).total_seconds(), 3)
+        except ValueError:
+            payload["duration_seconds"] = None
+    return payload
 
 
 def write_brief(path: Path, payload: dict) -> None:
