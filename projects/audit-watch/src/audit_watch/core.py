@@ -4,12 +4,14 @@ import csv
 import html
 import json
 import re
+import ssl
 import subprocess
+import time
 from base64 import b64decode
 from datetime import date, datetime, timezone
 from html.parser import HTMLParser
 from pathlib import Path
-from urllib.error import HTTPError
+from urllib.error import HTTPError, URLError
 from urllib.parse import parse_qs, quote, quote_plus, unquote, urljoin, urlparse, urlunparse
 from urllib.request import Request, urlopen
 
@@ -620,14 +622,50 @@ def _open_url(url: str, *, timeout_seconds: int):
         raise
 
 
+def _open_url_insecure_html(url: str, *, timeout_seconds: int):
+    context = ssl._create_unverified_context()
+    req = Request(url, headers=DEFAULT_REQUEST_HEADERS)
+    try:
+        return urlopen(req, timeout=timeout_seconds, context=context)
+    except HTTPError as exc:
+        if exc.code == 403:
+            retry_req = Request(url, headers=FALLBACK_REQUEST_HEADERS)
+            return urlopen(retry_req, timeout=timeout_seconds, context=context)
+        raise
+
+
+def _read_http_error_html(exc: HTTPError) -> str | None:
+    content_type = (exc.headers.get("Content-Type") or "").lower()
+    body = exc.read()
+    if exc.code == 404 and "html" in content_type and body.strip():
+        return body.decode("utf-8", errors="replace")
+    return None
+
+
 def _fetch_text(url: str, timeout_seconds: int) -> str:
-    with _open_url(url, timeout_seconds=timeout_seconds) as resp:
-        return resp.read().decode("utf-8", errors="replace")
+    for attempt in range(3):
+        try:
+            with _open_url(url, timeout_seconds=timeout_seconds) as resp:
+                return resp.read().decode("utf-8", errors="replace")
+        except HTTPError as exc:
+            html_body = _read_http_error_html(exc)
+            if html_body is not None:
+                return html_body
+            raise
+        except URLError as exc:
+            message = str(exc)
+            if "CERTIFICATE_VERIFY_FAILED" in message:
+                with _open_url_insecure_html(url, timeout_seconds=timeout_seconds) as resp:
+                    return resp.read().decode("utf-8", errors="replace")
+            if attempt < 2 and "nodename nor servname" in message:
+                time.sleep(0.5 * (attempt + 1))
+                continue
+            raise
+    raise RuntimeError(f"Failed to fetch {url}")
 
 
 def _fetch_html(url: str, timeout_seconds: int) -> str:
-    with _open_url(url, timeout_seconds=timeout_seconds) as resp:
-        return resp.read().decode("utf-8", errors="replace")
+    return _fetch_text(url, timeout_seconds)
 
 
 def _normalize_title(title: str, url: str) -> str:

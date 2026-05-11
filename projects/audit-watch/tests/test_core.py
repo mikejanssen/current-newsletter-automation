@@ -3,7 +3,10 @@ from __future__ import annotations
 import json
 import tempfile
 import unittest
+from io import BytesIO
 from pathlib import Path
+from urllib.error import HTTPError
+from unittest.mock import patch
 
 from audit_watch import core
 from audit_watch.models import StationRecord
@@ -46,6 +49,20 @@ class CoreTests(unittest.TestCase):
         self.assertEqual(len(payload["malformed_urls"]), 1)
         self.assertEqual(len(payload["enabled_without_page_url"]), 1)
         self.assertEqual(len(payload["disabled_with_page_url"]), 1)
+
+    def test_fetch_text_accepts_html_body_from_404_page(self) -> None:
+        error = HTTPError(
+            "https://example.org/reports",
+            404,
+            "Not Found",
+            {"Content-Type": "text/html; charset=UTF-8"},
+            BytesIO(b"<html><a href='/audit.pdf'>Audit</a></html>"),
+        )
+
+        with patch.object(core, "_open_url", side_effect=error):
+            text = core._fetch_text("https://example.org/reports", timeout_seconds=1)
+
+        self.assertIn("audit.pdf", text)
 
     def test_summarize_failures_groups_types_and_stations(self) -> None:
         failures = [
