@@ -61,16 +61,58 @@ AUDIT_HINTS = (
     "cafr",
     "acfr",
 )
+NON_FINANCIAL_AUDIT_HINTS = (
+    "eeo audit",
+    "eeo-audit",
+    "eeo_audit",
+    "employment audit",
+)
 UNUSUAL_PATTERNS: list[tuple[re.Pattern[str], str]] = [
-    (re.compile(r"\bmaterial weakness(?:es)?\b", re.IGNORECASE), "Material weakness noted"),
-    (re.compile(r"\bsignificant deficienc(?:y|ies)\b", re.IGNORECASE), "Significant deficiency noted"),
-    (re.compile(r"\bgoing concern\b", re.IGNORECASE), "Going concern language"),
     (re.compile(r"\bqualified opinion\b", re.IGNORECASE), "Qualified audit opinion"),
     (re.compile(r"\badverse opinion\b", re.IGNORECASE), "Adverse audit opinion"),
     (re.compile(r"\bdisclaimer of opinion\b", re.IGNORECASE), "Disclaimer of opinion"),
     (re.compile(r"\bquestioned costs?\b", re.IGNORECASE), "Questioned costs reported"),
-    (re.compile(r"\bnoncompliance\b", re.IGNORECASE), "Noncompliance finding"),
 ]
+INTERNAL_CONTROL_PATTERNS = (
+    (re.compile(r"\bmaterial weakness(?:es)?\b", re.IGNORECASE), "Material weakness noted"),
+    (re.compile(r"\bsignificant deficienc(?:y|ies)\b", re.IGNORECASE), "Significant deficiency noted"),
+)
+INTERNAL_CONTROL_BOILERPLATE_PATTERNS = (
+    re.compile(r"\bmaterial weakness is a deficiency\b", re.IGNORECASE),
+    re.compile(r"\bmaterial weakness is the most severe\b", re.IGNORECASE),
+    re.compile(r"\bsignificant deficiency is a deficiency\b", re.IGNORECASE),
+    re.compile(r"\bwe did not identify any deficiencies\b", re.IGNORECASE),
+    re.compile(r"\bdid not identify any deficiencies\b", re.IGNORECASE),
+    re.compile(r"\bmaterial weaknesses or significant deficiencies may exist\b", re.IGNORECASE),
+    re.compile(r"\bmay exist that (?:have )?not (?:been )?identified\b", re.IGNORECASE),
+    re.compile(r"\bmaterial weakness\\(es\\) identified\?\b.{0,220}\bno\b", re.IGNORECASE | re.DOTALL),
+    re.compile(r"\bsignificant deficiency\\(ies\\) identified\b.{0,220}\bnone reported\b", re.IGNORECASE | re.DOTALL),
+    re.compile(r"\bmaterial weakness(?:es)? identified\?\b.{0,220}\bno\b", re.IGNORECASE | re.DOTALL),
+    re.compile(r"\bsignificant deficiency(?:ies)? identified\b.{0,240}\bnone reported\b", re.IGNORECASE | re.DOTALL),
+    re.compile(r"\bmaterial weakness\b.{0,260}\byes\s+x\s+no\b", re.IGNORECASE | re.DOTALL),
+    re.compile(r"\bsignificant deficiency\b.{0,280}\byes\s+x\s+none reported\b", re.IGNORECASE | re.DOTALL),
+)
+GOING_CONCERN_PATTERNS = (
+    re.compile(r"\bsubstantial doubt\b.{0,240}\bgoing concern\b", re.IGNORECASE | re.DOTALL),
+    re.compile(r"\bgoing concern\b.{0,240}\bsubstantial doubt\b", re.IGNORECASE | re.DOTALL),
+)
+GOING_CONCERN_BOILERPLATE_PATTERNS = (
+    re.compile(r"\bin preparing\b.{0,120}\bmanagement is required to evaluate\b.{0,700}\bgoing concern\b", re.IGNORECASE | re.DOTALL),
+    re.compile(r"\bmanagement is required to evaluate\b.{0,700}\bgoing concern\b", re.IGNORECASE | re.DOTALL),
+    re.compile(r"\bmanagement.{0,80}\bresponsible\b.{0,420}\bgoing concern\b", re.IGNORECASE | re.DOTALL),
+    re.compile(r"\bconclude whether\b.{0,420}\bgoing concern\b", re.IGNORECASE | re.DOTALL),
+)
+NONCOMPLIANCE_PATTERNS = (
+    re.compile(r"\bmaterial noncompliance\b", re.IGNORECASE),
+    re.compile(r"\binstances? of noncompliance\b", re.IGNORECASE),
+    re.compile(r"\bnoncompliance\b.{0,120}\brequired to be reported\b", re.IGNORECASE | re.DOTALL),
+)
+NONCOMPLIANCE_BOILERPLATE_PATTERNS = (
+    re.compile(r"\bno instances? of noncompliance\b.{0,260}\brequired\s+to\s+be\s+reported\b", re.IGNORECASE | re.DOTALL),
+    re.compile(r"\bif found to be in error or noncompliance\b", re.IGNORECASE),
+    re.compile(r"\bnoncompliance with which could have\b.{0,160}\bmaterial effect\b", re.IGNORECASE | re.DOTALL),
+    re.compile(r"\bno noncompliance material to\b", re.IGNORECASE),
+)
 
 SEARCH_ENGINE_HOSTS = {
     "www.bing.com",
@@ -523,20 +565,17 @@ def validate_station_records(stations: list[StationRecord]) -> dict:
 def summarize_failures(failures: list[dict[str, str]]) -> dict:
     by_station: dict[str, dict] = {}
     by_type: dict[str, int] = {}
+    transient_count = 0
     for failure in failures:
         station_id = failure.get("station_id", "unknown")
         station_name = failure.get("station_name") or station_id
         error = failure.get("error", "")
-        if "HTTP Error 404" in error:
-            failure_type = "http_404"
-        elif "CERTIFICATE_VERIFY_FAILED" in error:
-            failure_type = "ssl_certificate"
-        elif "timed out" in error.lower() or "timeout" in error.lower():
-            failure_type = "timeout"
-        elif "download/archive failed" in error:
-            failure_type = "archive"
-        else:
-            failure_type = "other"
+        failure_type = failure.get("failure_type") or classify_failure_type(error)
+        transient = failure.get("transient")
+        if transient is None:
+            transient = is_transient_failure(error)
+        if transient:
+            transient_count += 1
         by_type[failure_type] = by_type.get(failure_type, 0) + 1
         entry = by_station.setdefault(
             station_id,
@@ -558,8 +597,45 @@ def summarize_failures(failures: list[dict[str, str]]) -> dict:
     return {
         "failure_count": len(failures),
         "station_failure_count": len(by_station),
+        "transient_failure_count": transient_count,
+        "persistent_failure_count": len(failures) - transient_count,
         "by_type": dict(sorted(by_type.items())),
         "by_station": stations,
+    }
+
+
+def classify_failure_type(error: str) -> str:
+    if "HTTP Error 404" in error:
+        return "http_404"
+    if "CERTIFICATE_VERIFY_FAILED" in error:
+        return "ssl_certificate"
+    if "download/archive failed" in error:
+        return "archive"
+
+    lowered = error.lower()
+    if "timed out" in lowered or "timeout" in lowered:
+        return "timeout"
+    if "connection reset" in lowered or "errno 54" in lowered:
+        return "connection_reset"
+    if "remote end closed connection" in lowered:
+        return "connection_closed"
+    if "nodename nor servname" in lowered or "name or service not known" in lowered:
+        return "dns"
+    if "handshake operation timed out" in lowered:
+        return "timeout"
+    if "http error 5" in lowered:
+        return "http_5xx"
+    return "other"
+
+
+def is_transient_failure(error: str) -> bool:
+    return classify_failure_type(error) in {
+        "timeout",
+        "connection_reset",
+        "connection_closed",
+        "dns",
+        "http_5xx",
+        "other",
     }
 
 
@@ -692,6 +768,8 @@ def _is_candidate(title: str, absolute_url: str) -> bool:
     if ext not in DOC_EXTENSIONS:
         return False
     blob = f"{title} {absolute_url}".lower()
+    if any(h in blob for h in NON_FINANCIAL_AUDIT_HINTS):
+        return False
     return any(h in blob for h in AUDIT_HINTS)
 
 
@@ -1042,7 +1120,165 @@ def _flags_for_text(text: str) -> list[str]:
     for pattern, label in UNUSUAL_PATTERNS:
         if pattern.search(text):
             flags.append(label)
+    flags.extend(_internal_control_flags(text))
+    if _has_going_concern_finding(text):
+        flags.append("Going concern finding")
+    if _has_noncompliance_finding(text):
+        flags.append("Noncompliance finding")
     return flags
+
+
+def _internal_control_flags(text: str) -> list[str]:
+    flags: list[str] = []
+    for pattern, label in INTERNAL_CONTROL_PATTERNS:
+        for match in pattern.finditer(text):
+            context = text[max(0, match.start() - 700) : match.end() + 700]
+            if any(boilerplate.search(context) for boilerplate in INTERNAL_CONTROL_BOILERPLATE_PATTERNS):
+                continue
+            flags.append(label)
+            break
+    return flags
+
+
+def _has_going_concern_finding(text: str) -> bool:
+    if not any(pattern.search(text) for pattern in GOING_CONCERN_PATTERNS):
+        return False
+    scrubbed = text
+    for pattern in GOING_CONCERN_BOILERPLATE_PATTERNS:
+        scrubbed = pattern.sub(" ", scrubbed)
+    return any(pattern.search(scrubbed) for pattern in GOING_CONCERN_PATTERNS)
+
+
+def _has_noncompliance_finding(text: str) -> bool:
+    if not any(pattern.search(text) for pattern in NONCOMPLIANCE_PATTERNS):
+        return False
+    scrubbed = text
+    for pattern in NONCOMPLIANCE_BOILERPLATE_PATTERNS:
+        scrubbed = pattern.sub(" ", scrubbed)
+    return any(pattern.search(scrubbed) for pattern in NONCOMPLIANCE_PATTERNS)
+
+
+def extract_document_year(title: str, url: str) -> int | None:
+    current_year = date.today().year
+    title_years = _extract_years(title, current_year)
+    if title_years:
+        return max(title_years)
+    filename = Path(unquote(urlparse(url).path)).name if url else ""
+    url_years = _extract_years(filename, current_year)
+    return max(url_years) if url_years else None
+
+
+def _extract_years(value: str, current_year: int) -> list[int]:
+    years = []
+    for match in re.finditer(r"(?<!\d)(20\d{2})(?!\d)", value):
+        year = int(match.group(1))
+        if 2000 <= year <= current_year + 1:
+            years.append(year)
+    for match in re.finditer(r"(?<![A-Za-z0-9])FY(?:E)?[\s'_-]?(\d{2})(?!\d)", value, re.IGNORECASE):
+        year = 2000 + int(match.group(1))
+        if 2000 <= year <= current_year + 1:
+            years.append(year)
+    for match in re.finditer(r"(?<!\d)(20\d{2})[._-]?(?:0[1-9]|1[0-2])[._-]?(?:0[1-9]|[12]\d|3[01])(?!\d)", value):
+        year = int(match.group(1))
+        if 2000 <= year <= current_year + 1:
+            years.append(year)
+    for match in re.finditer(r"(?<!\d)(?:0[1-9]|1[0-2])(?:0[1-9]|[12]\d|3[01])(20\d{2})(?!\d)", value):
+        year = int(match.group(1))
+        if 2000 <= year <= current_year + 1:
+            years.append(year)
+    for match in re.finditer(r"(?<!\d)(?:0?[1-9]|1[0-2])[._-](?:0?[1-9]|[12]\d|3[01])[._-](\d{2})(?!\d)", value):
+        year = 2000 + int(match.group(1))
+        if 2000 <= year <= current_year + 1:
+            years.append(year)
+    return years
+
+
+def _document_kind(title: str, url: str) -> str:
+    blob = f"{title} {url}".lower()
+    if "audit" in blob or "audited" in blob or "independent-auditor" in blob:
+        return "audited_financial"
+    if "financial statement" in blob or "financial report" in blob or re.search(r"\bfs\b", blob):
+        return "financial_statement"
+    if "annual report" in blob:
+        return "annual_report"
+    return "other"
+
+
+def _document_kind_rank(kind: str) -> int:
+    return {
+        "audited_financial": 0,
+        "financial_statement": 1,
+        "annual_report": 2,
+        "other": 3,
+    }.get(kind, 3)
+
+
+def _document_priority(doc: dict) -> tuple:
+    confidence_rank = {"high": 0, "medium": 1, "low": 2}
+    year = doc.get("document_year")
+    year_rank = -(int(year) if isinstance(year, int) else 0)
+    latest_rank = 0 if doc.get("is_latest_for_station") else 1
+    return (
+        latest_rank,
+        _document_kind_rank(str(doc.get("document_kind", "other"))),
+        year_rank,
+        confidence_rank.get(str(doc.get("confidence", "")).lower(), 3),
+        str(doc.get("station_name", "")),
+        str(doc.get("title", "")),
+    )
+
+
+def _document_payloads(new_docs: list[AuditDocument]) -> list[dict]:
+    best_rank_by_station = _best_document_ranks_by_station(new_docs)
+
+    out = []
+    for doc in new_docs:
+        year = extract_document_year(doc.title, doc.document_url)
+        kind = _document_kind(doc.title, doc.document_url)
+        station_rank = (_document_kind_rank(kind), -(year or 0))
+        is_latest = station_rank == best_rank_by_station.get(doc.station_id)
+        out.append(
+            {
+                "doc_id": doc.doc_id,
+                "station_id": doc.station_id,
+                "station_name": doc.station_name,
+                "title": doc.title,
+                "document_url": doc.document_url,
+                "downloaded_path": doc.downloaded_path,
+                "status": doc.status,
+                "flags": doc.flags,
+                "summary": doc.summary,
+                "confidence": doc.confidence,
+                "document_year": year,
+                "document_kind": kind,
+                "is_latest_for_station": is_latest,
+            }
+        )
+    return sorted(out, key=_document_priority)
+
+
+def _best_document_ranks_by_station(docs: list[AuditDocument]) -> dict[str, tuple[int, int]]:
+    best_rank_by_station: dict[str, tuple[int, int]] = {}
+    for doc in docs:
+        year = extract_document_year(doc.title, doc.document_url)
+        kind = _document_kind(doc.title, doc.document_url)
+        station_rank = (_document_kind_rank(kind), -(year or 0))
+        best = best_rank_by_station.get(doc.station_id)
+        if best is None or station_rank < best:
+            best_rank_by_station[doc.station_id] = station_rank
+    return best_rank_by_station
+
+
+def latest_station_documents(docs: list[AuditDocument]) -> list[AuditDocument]:
+    best_rank_by_station = _best_document_ranks_by_station(docs)
+    latest = []
+    for doc in docs:
+        year = extract_document_year(doc.title, doc.document_url)
+        kind = _document_kind(doc.title, doc.document_url)
+        station_rank = (_document_kind_rank(kind), -(year or 0))
+        if station_rank == best_rank_by_station.get(doc.station_id):
+            latest.append(doc)
+    return sorted(latest, key=lambda d: (d.station_name, d.title, d.document_url))
 
 
 def archive_document(
@@ -1099,6 +1335,9 @@ def build_payload(
     stations_skipped: int | None = None,
     documents_discovered: int | None = None,
     documents_archived: int | None = None,
+    documents_archive_candidates: int | None = None,
+    documents_skipped_by_archive_scope: int | None = None,
+    archive_scope: str = "all",
     scan_status: str = "completed",
 ) -> dict:
     flagged = [d for d in new_docs if d.flags.strip()]
@@ -1115,23 +1354,12 @@ def build_payload(
             "stations_skipped": stations_skipped,
             "documents_discovered": documents_discovered,
             "documents_archived": documents_archived,
+            "documents_archive_candidates": documents_archive_candidates,
+            "documents_skipped_by_archive_scope": documents_skipped_by_archive_scope,
         },
+        "archive_scope": archive_scope,
         "scan_status": scan_status,
-        "new_documents": [
-            {
-                "doc_id": d.doc_id,
-                "station_id": d.station_id,
-                "station_name": d.station_name,
-                "title": d.title,
-                "document_url": d.document_url,
-                "downloaded_path": d.downloaded_path,
-                "status": d.status,
-                "flags": d.flags,
-                "summary": d.summary,
-                "confidence": d.confidence,
-            }
-            for d in new_docs
-        ],
+        "new_documents": _document_payloads(new_docs),
         "failures": failures,
     }
     if started_at and finished_at:
@@ -1162,7 +1390,10 @@ def write_brief(path: Path, payload: dict) -> None:
     docs = payload.get("new_documents") or []
     if docs:
         for doc in docs:
-            lines.append(f"- {doc['station_name']}: {doc['title']}")
+            year = doc.get("document_year")
+            latest = " latest-for-station" if doc.get("is_latest_for_station") else ""
+            year_label = f" ({year}{latest})" if year else ""
+            lines.append(f"- {doc['station_name']}: {doc['title']}{year_label}")
             lines.append(f"  URL: {doc['document_url']}")
             lines.append(f"  Saved: {doc['downloaded_path']}")
             lines.append(f"  Notes: {doc['summary']}")

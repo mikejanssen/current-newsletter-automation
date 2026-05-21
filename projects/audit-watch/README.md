@@ -33,6 +33,30 @@ PYTHONPATH=src python3 -m audit_watch.cli daily-run \
 
 Station page fetches and new-document downloads run with bounded parallelism. Use
 `--workers N` or `AUDIT_WATCH_WORKERS=N` to tune concurrency.
+Transient station-page failures are retried once by default at lower concurrency
+with a longer timeout. Tune with `--failure-retry-passes`,
+`--failure-retry-workers`, `--failure-retry-timeout-multiplier`, or the matching
+`AUDIT_WATCH_FAILURE_RETRY_*` environment variables.
+
+To avoid archiving every historical backfile on a first run, use latest-only
+archive mode:
+
+```bash
+PYTHONPATH=src python3 -m audit_watch.cli daily-run \
+  --stations config/stations.csv \
+  --state output/state.json \
+  --out output/last-run.json \
+  --brief output/briefing.md \
+  --failures-out output/fetch-failures.json \
+  --health-out output/health.json \
+  --archive-root output/audits \
+  --archive-scope latest
+```
+
+`--archive-scope latest` still discovers all configured page documents, but only
+downloads and marks seen the current best audit/financial document(s) per
+station. The CLI default remains `--archive-scope all`; the scheduled runner
+defaults to `AUDIT_WATCH_ARCHIVE_SCOPE=latest`.
 
 Run the production path, including audit-chatbot risk rollup, health output, and Slack notification:
 
@@ -44,6 +68,7 @@ PYTHONPATH=src python3 -m audit_watch.cli run-and-notify \
   --brief output/briefing.md \
   --failures-out output/fetch-failures.json \
   --archive-root output/audits \
+  --archive-scope latest \
   --health-out output/health.json
 ```
 
@@ -53,6 +78,15 @@ Validate station config:
 PYTHONPATH=src python3 -m audit_watch.cli validate-stations \
   --stations config/stations.csv
 ```
+
+Check the latest saved run and scheduled job state:
+
+```bash
+PYTHONPATH=src python3 -m audit_watch.cli status
+```
+
+Use `--no-launchd` to read only saved output files, or `--limit-failures N` to
+control how many current failures are printed.
 
 Fast live validation without archive downloads or state updates:
 
@@ -87,6 +121,34 @@ PYTHONPATH=src python3 -m audit_watch.cli discover-pages \
   --apply
 ```
 
+Review disabled stations that already have page URLs:
+
+```bash
+PYTHONPATH=src python3 -m audit_watch.cli review-disabled \
+  --stations config/stations.csv \
+  --out output/disabled-review.json \
+  --csv-out output/disabled-review.csv \
+  --failures-out output/disabled-review-failures.json \
+  --limit 25
+```
+
+Use `--offset` to advance through the disabled backlog in batches. This command
+does not archive documents or update state; it writes a review queue showing
+which disabled station pages currently expose candidate audit/financial files.
+
+List archived documents that appear to pertain to a recent fiscal/calendar year:
+
+```bash
+PYTHONPATH=src python3 -m audit_watch.cli recent-docs \
+  --archive-root output/audits \
+  --since-year 2025 \
+  --after-archive-date 2026-03-04 \
+  --out output/recent-documents-2025-plus.csv
+```
+
+The year filter prefers the document title or filename, so upload folders such
+as `/2026/01/` do not make an older audit look like a 2026 document.
+
 ## Configure stations
 Edit `config/stations.csv`:
 - `station_id`: stable slug (used in output paths)
@@ -105,6 +167,11 @@ Run manually:
 ./scripts/run-daily-scan.sh
 ```
 
+For manual runs, the script loads `./.env` if present before applying defaults.
+Put local-only secrets such as `SLACK_WEBHOOK_URL` there; `.env` files are
+ignored by git. LaunchAgent environment variables still work when no `.env` is
+present.
+
 Install as a LaunchAgent:
 
 ```bash
@@ -121,7 +188,7 @@ Sample schedule is weekly (Monday) at 9:10 local time.
 - one or more stations had fetch/archive failures, or
 - strict/watchlist risk signals are found for the run date
 
-Set `SLACK_WEBHOOK_URL` in the plist (or your shell env for manual runs).
+Set `SLACK_WEBHOOK_URL` in the plist or in local `./.env` for manual runs.
 
 By default, no Slack message is sent on a fully quiet run. Set `AUDIT_WATCH_NOTIFY_ON_NO_CHANGES=1` to force heartbeat messages even when quiet.
 Slack failures are recorded in `output/health.json` as `slack_status = failed`; they do not erase successful scan/risk outputs.
@@ -135,6 +202,10 @@ Optional env vars for Slack detail limits:
 - `AUDIT_WATCH_SLACK_MAX_STRICT_RISKS` (default `5`)
 - `AUDIT_WATCH_SLACK_MAX_WATCHLIST_RISKS` (default `5`)
 - `AUDIT_CHATBOT_RISK_LIMIT` (default `8`, max rows emitted in risk briefing files)
+- `AUDIT_WATCH_ARCHIVE_SCOPE` (`all` or `latest`; scheduled runner default `latest`)
+- `AUDIT_WATCH_FAILURE_RETRY_PASSES` (default `1`)
+- `AUDIT_WATCH_FAILURE_RETRY_WORKERS` (default `2`)
+- `AUDIT_WATCH_FAILURE_RETRY_TIMEOUT_MULTIPLIER` (default `1.5`)
 
 ## Tests
 Run the local test suite:

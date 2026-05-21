@@ -35,8 +35,16 @@
       <string>SET_IN_LOCAL_LAUNCHAGENT_ONLY</string>
       <key>AUDIT_WATCH_TIMEOUT_SECONDS</key>
       <string>20</string>
+      <key>AUDIT_WATCH_FAILURE_RETRY_PASSES</key>
+      <string>1</string>
+      <key>AUDIT_WATCH_FAILURE_RETRY_WORKERS</key>
+      <string>2</string>
+      <key>AUDIT_WATCH_FAILURE_RETRY_TIMEOUT_MULTIPLIER</key>
+      <string>1.5</string>
       <key>AUDIT_WATCH_NOTIFY_ON_NO_CHANGES</key>
       <string>0</string>
+      <key>AUDIT_WATCH_ARCHIVE_SCOPE</key>
+      <string>latest</string>
     </dict>
 
     <key>RunAtLoad</key>
