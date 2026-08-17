@@ -99,4 +99,4 @@ The workflow requires these GitHub Actions secrets:
 - `RSS_WATCH_OPML_B64`: base64-encoded contents of the current OPML export
 - `RSS_WATCH_SLACK_WEBHOOK_URL`: Slack incoming-webhook URL
 
-Manual runs default to dry-run mode and upload their briefing and JSON output as a workflow artifact. Scheduled runs post to Slack and update the hosted state only after a successful post.
+Manual runs default to dry-run mode and upload their briefing and JSON output as a workflow artifact. A successful dry run also seeds the hosted checkpoint when no cache exists, without posting to Slack or advancing an existing checkpoint. Scheduled runs post to Slack and update the hosted state only after a successful post.
