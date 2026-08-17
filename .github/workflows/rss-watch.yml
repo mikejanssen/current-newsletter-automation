@@ -1,0 +1,190 @@
+name: RSS Watch
+
+on:
+  schedule:
+    # GitHub cron is UTC. Paired triggers cover EDT and EST; the prepare
+    # step below admits only the trigger matching New York's current offset.
+    - cron: "45 12 * * 1-5"
+    - cron: "45 13 * * 1-5"
+    - cron: "0 18 * * 1-5"
+    - cron: "0 19 * * 1-5"
+  workflow_dispatch:
+    inputs:
+      mode:
+        description: "Run mode"
+        required: true
+        default: morning
+        type: choice
+        options:
+          - morning
+          - update
+      dry_run:
+        description: "Do not post to Slack or update hosted state"
+        required: true
+        default: true
+        type: boolean
+
+concurrency:
+  group: rss-watch-state
+  cancel-in-progress: false
+
+jobs:
+  rss-watch:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    permissions:
+      contents: read
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Select the intended Eastern-time run
+        id: prepare
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          EVENT_SCHEDULE: ${{ github.event.schedule }}
+          MANUAL_MODE: ${{ inputs.mode }}
+          MANUAL_DRY_RUN: ${{ inputs.dry_run }}
+        shell: bash
+        run: |
+          python - <<'PY'
+          import datetime as dt
+          import os
+          from zoneinfo import ZoneInfo
+
+          event_name = os.environ.get("EVENT_NAME", "")
+          schedule = os.environ.get("EVENT_SCHEDULE", "")
+          now_et = dt.datetime.now(dt.timezone.utc).astimezone(ZoneInfo("America/New_York"))
+          utc_offset_hours = int(now_et.utcoffset().total_seconds() // 3600)
+
+          scheduled = {
+              "45 12 * * 1-5": ("morning", -4),
+              "45 13 * * 1-5": ("morning", -5),
+              "0 18 * * 1-5": ("update", -4),
+              "0 19 * * 1-5": ("update", -5),
+          }
+
+          if event_name == "workflow_dispatch":
+              should_run = True
+              mode = os.environ.get("MANUAL_MODE") or "morning"
+              dry_run = os.environ.get("MANUAL_DRY_RUN", "true").lower() == "true"
+          else:
+              mode, expected_offset = scheduled.get(schedule, ("", 99))
+              should_run = utc_offset_hours == expected_offset
+              dry_run = False
+
+          with open(os.environ["GITHUB_OUTPUT"], "a", encoding="utf-8") as output:
+              output.write(f"should_run={'true' if should_run else 'false'}\n")
+              output.write(f"mode={mode}\n")
+              output.write(f"dry_run={'true' if dry_run else 'false'}\n")
+          PY
+
+      - name: Set up Python
+        if: steps.prepare.outputs.should_run == 'true'
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Restore hosted de-duplication state
+        if: steps.prepare.outputs.should_run == 'true'
+        id: state-cache
+        uses: actions/cache/restore@v4
+        with:
+          path: projects/rss-watch/output/state.json
+          key: rss-watch-state-${{ github.run_id }}
+          restore-keys: |
+            rss-watch-state-
+
+      - name: Prepare private feed configuration and initial state
+        if: steps.prepare.outputs.should_run == 'true'
+        env:
+          RSS_WATCH_OPML_B64: ${{ secrets.RSS_WATCH_OPML_B64 }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [ -z "$RSS_WATCH_OPML_B64" ]; then
+            echo "Missing required RSS_WATCH_OPML_B64 repository secret." >&2
+            exit 1
+          fi
+          mkdir -p projects/rss-watch/output
+          printf '%s' "$RSS_WATCH_OPML_B64" | base64 --decode > projects/rss-watch/output/feeds.opml
+          if [ ! -f projects/rss-watch/output/state.json ]; then
+            python - <<'PY'
+          import datetime as dt
+          import json
+          from pathlib import Path
+
+          state = {
+              "last_checked": dt.datetime.now(dt.timezone.utc).isoformat(),
+              "seen_ids": [],
+          }
+          Path("projects/rss-watch/output/state.json").write_text(
+              json.dumps(state, indent=2, sort_keys=True),
+              encoding="utf-8",
+          )
+          PY
+          fi
+
+      - name: Run RSS Watch
+        if: steps.prepare.outputs.should_run == 'true'
+        env:
+          SLACK_WEBHOOK_URL: ${{ secrets.RSS_WATCH_SLACK_WEBHOOK_URL }}
+          RUN_MODE: ${{ steps.prepare.outputs.mode }}
+          DRY_RUN: ${{ steps.prepare.outputs.dry_run }}
+        working-directory: projects/rss-watch
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [ "$DRY_RUN" != "true" ] && [ -z "$SLACK_WEBHOOK_URL" ]; then
+            echo "Missing required RSS_WATCH_SLACK_WEBHOOK_URL repository secret." >&2
+            exit 1
+          fi
+          args=(
+            --opml output/feeds.opml
+            --mode "$RUN_MODE"
+            --window-hours 72
+            --since-last-checked
+            --state output/state.json
+            --out output/hosted-last-run.json
+            --candidates-out output/hosted-candidates.json
+            --brief output/hosted-briefing.md
+            --max-items 200
+            --max-item-age-days 30
+            --feed-timeout-seconds 8
+            --feed-retries 0
+            --parallelism 12
+          )
+          if [ "$DRY_RUN" = "true" ]; then
+            args+=(--dry-run)
+          fi
+          PYTHONPATH=src python -m rss_watch.cli "${args[@]}"
+          if [ "$DRY_RUN" != "true" ]; then
+            python - <<'PY'
+          import json
+          from pathlib import Path
+
+          payload = json.loads(Path("output/hosted-last-run.json").read_text(encoding="utf-8"))
+          if payload.get("slack_status") != "sent" or not payload.get("state_updated"):
+              raise SystemExit("RSS Watch did not complete Slack delivery and state update")
+          PY
+          fi
+
+      - name: Save hosted de-duplication state
+        if: steps.prepare.outputs.should_run == 'true' && steps.prepare.outputs.dry_run != 'true' && success()
+        uses: actions/cache/save@v4
+        with:
+          path: projects/rss-watch/output/state.json
+          key: rss-watch-state-${{ github.run_id }}
+
+      - name: Upload briefing and diagnostics
+        if: steps.prepare.outputs.should_run == 'true' && always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: rss-watch-${{ steps.prepare.outputs.mode }}-${{ github.run_id }}
+          path: |
+            projects/rss-watch/output/hosted-briefing.md
+            projects/rss-watch/output/hosted-last-run.json
+            projects/rss-watch/output/hosted-candidates.json
+          if-no-files-found: ignore
+          retention-days: 14

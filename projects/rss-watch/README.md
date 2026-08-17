@@ -83,3 +83,20 @@ PYTHONPATH=src python3 -m rss_watch.cli \
   - `scripts/run-rss-watch.sh`
 
 State is updated only after a successful Slack post when Slack delivery is configured. Dry runs do not update state.
+
+## Hosted Runs (GitHub Actions)
+
+`.github/workflows/rss-watch.yml` runs independently of the local Mac on weekdays:
+
+- morning briefing at `08:45 America/New_York`
+- intra-day update at `14:00 America/New_York`
+- paired UTC schedules plus an Eastern-time offset gate handle daylight saving time
+- a serialized Actions cache carries `output/state.json` between runs for de-duplication
+- if no state cache exists, the workflow starts at its current time rather than replaying old items
+
+The workflow requires these GitHub Actions secrets:
+
+- `RSS_WATCH_OPML_B64`: base64-encoded contents of the current OPML export
+- `RSS_WATCH_SLACK_WEBHOOK_URL`: Slack incoming-webhook URL
+
+Manual runs default to dry-run mode and upload their briefing and JSON output as a workflow artifact. Scheduled runs post to Slack and update the hosted state only after a successful post.

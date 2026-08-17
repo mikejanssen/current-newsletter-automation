@@ -45,6 +45,7 @@ CORE_KEYWORDS = [
 WEAK_BRAND_KEYWORDS = [
     "pbs",
     "npr",
+    "oeta",
 ]
 
 CORE_KEYWORDS.extend(WEAK_BRAND_KEYWORDS)
@@ -64,6 +65,24 @@ HIGH_SIGNAL_TERMS = [
     "general manager",
     "board",
     "board chair",
+    "publicly funded broadcasting",
+    "veto",
+    "vetoes",
+    "vetoed",
+]
+
+OWNERSHIP_DISPOSITION_TERMS = [
+    "sale",
+    "sell",
+    "selling",
+    "buyer",
+    "acquire",
+    "acquisition",
+    "assign license",
+    "assignment of license",
+    "license transfer",
+    "transfer the license",
+    "transfer of control",
 ]
 
 COMMENTARY_TERMS = [
@@ -86,12 +105,65 @@ PUBLIC_MEDIA_POLICY_TERMS = [
     "federal funding",
     "state funding",
     "public funding",
+    "publicly funded broadcasting",
     "funding cuts",
     "rescission",
     "license",
     "fcc",
     "board",
     "governance",
+]
+
+PUBLIC_MEDIA_LEGAL_DISPUTE_TERMS = [
+    "lawsuit",
+    "sue",
+    "sues",
+    "sued",
+    "suing",
+    "filed suit",
+    "files suit",
+    "legal action",
+    "court filing",
+    "station claims",
+    "station alleges",
+]
+
+PUBLIC_MEDIA_OPERATOR_SELECTION_TERMS = [
+    "franchise",
+    "take over",
+    "takes over",
+    "run",
+    "operate",
+    "operator",
+    "compete",
+    "competes",
+    "competing",
+    "competitive bidding",
+    "bidding process",
+    "proposal",
+    "proposals",
+    "bid",
+    "bids",
+    "rfp",
+]
+
+PUBLIC_MEDIA_RESCUE_GOVERNANCE_TERMS = [
+    "save",
+    "saves",
+    "saved",
+    "rescue",
+    "rescues",
+    "rescued",
+    "preserve",
+    "preserves",
+    "preserved",
+    "keep alive",
+    "governor",
+    "governors",
+    "legislature",
+    "legislative",
+    "lawmakers",
+    "statehouse",
 ]
 
 MANAGEMENT_CHANGE_TERMS = [
@@ -170,6 +242,11 @@ STATION_OPERATION_TERMS = [
     "newscast",
     "newscasts",
     "newsroom",
+    "lineup",
+    "program",
+    "programs",
+    "programming",
+    "schedule",
     "studio",
     "studios",
     "broadcast center",
@@ -191,6 +268,81 @@ OPERATION_DISRUPTION_TERMS = [
     "end",
     "ends",
     "ending",
+    "cut",
+    "cuts",
+    "cutting",
+    "drop",
+    "drops",
+    "dropping",
+    "dropped",
+    "move",
+    "moves",
+    "moving",
+    "prune",
+    "prunes",
+    "pruned",
+    "remove",
+    "removes",
+    "removed",
+]
+
+NETWORK_DISAFFILIATION_TERMS = [
+    "drop",
+    "drops",
+    "dropping",
+    "dropped",
+    "cut ties",
+    "cuts ties",
+    "end affiliation",
+    "ends affiliation",
+    "ending affiliation",
+    "discontinue affiliation",
+    "discontinues affiliation",
+    "discontinuing affiliation",
+    "disaffiliate",
+    "disaffiliates",
+    "disaffiliation",
+]
+
+NETWORK_DISAFFILIATION_PATTERNS = [
+    # Direct actions: "drops NPR", "leaving PBS", "disaffiliates from PBS".
+    re.compile(
+        r"\b(?:drop(?:s|ped|ping)?|leave(?:s)?|leaving|left|disaffiliat(?:e|es|ed|ing))\b"
+        r"(?:\W+\w+){0,4}\W+\b(?:pbs|npr)\b",
+        re.IGNORECASE,
+    ),
+    # "ends PBS affiliation" or "discontinues its NPR membership".
+    re.compile(
+        r"\b(?:end(?:s|ed|ing)?|discontinu(?:e|es|ed|ing))\b"
+        r"(?:\W+\w+){0,4}\W+\b(?:pbs|npr)\b"
+        r"(?:\W+\w+){0,3}\W+\b(?:affiliation|membership|programming|service)\b",
+        re.IGNORECASE,
+    ),
+    # "ends its affiliation with PBS" and similar variants.
+    re.compile(
+        r"\b(?:end(?:s|ed|ing)?|discontinu(?:e|es|ed|ing))\b"
+        r"(?:\W+\w+){0,4}\W+\b(?:affiliation|membership|programming|service)\b"
+        r"(?:\W+\w+){0,4}\W+\b(?:pbs|npr)\b",
+        re.IGNORECASE,
+    ),
+    # Reverse construction: "PBS affiliation ends".
+    re.compile(
+        r"\b(?:pbs|npr)\b(?:\W+\w+){0,4}\W+"
+        r"\b(?:affiliation|membership|programming|service)\b"
+        r"(?:\W+\w+){0,3}\W+\b(?:end(?:s|ed|ing)?|stop(?:s|ped|ping)?)\b",
+        re.IGNORECASE,
+    ),
+    # Programming reductions, without treating generic funding cuts as disaffiliation.
+    re.compile(
+        r"\bcut(?:s|ting)?\b(?:\W+\w+){0,4}\W+\b(?:pbs|npr)\b"
+        r"(?:\W+\w+){0,3}\W+\b(?:programming|service|shows?)\b",
+        re.IGNORECASE,
+    ),
+    re.compile(
+        r"\bcut(?:s|ting)?\b(?:\W+\w+){0,2}\W+\bties\b"
+        r"(?:\W+\w+){0,4}\W+\b(?:pbs|npr)\b",
+        re.IGNORECASE,
+    ),
 ]
 
 CRITICAL_TERMS = [
@@ -400,6 +552,14 @@ def _has_any_term(text: str, terms: Iterable[str]) -> bool:
     return any(_has_term(text, term) for term in terms)
 
 
+def _has_network_disaffiliation_signal(text: str) -> bool:
+    if not _has_any_term(text, ["pbs", "npr"]):
+        return False
+    return _has_any_term(text, NETWORK_DISAFFILIATION_TERMS) or any(
+        pattern.search(text) for pattern in NETWORK_DISAFFILIATION_PATTERNS
+    )
+
+
 def _plain_text(value: str) -> str:
     unescaped = html.unescape(value or "")
     without_tags = re.sub(r"<[^>]+>", " ", unescaped)
@@ -567,6 +727,15 @@ def _score_item(title: str, summary: str, domain: str, published: datetime | Non
     if _is_public_media_commentary(text):
         score += 2
         reasons.append("public-media-commentary")
+    if (core_public_hits or weak_brand_hits) and _has_any_term(text, PUBLIC_MEDIA_LEGAL_DISPUTE_TERMS):
+        score += 6
+        reasons.append("public-media-legal-dispute")
+    if core_public_hits and _has_any_term(text, PUBLIC_MEDIA_OPERATOR_SELECTION_TERMS):
+        score += 4
+        reasons.append("public-media-operator-selection")
+    if weak_brand_hits and _has_any_term(text, PUBLIC_MEDIA_RESCUE_GOVERNANCE_TERMS):
+        score += 6
+        reasons.append("weak-brand+rescue-governance")
     if core_public_hits and _has_any_term(text, MANAGEMENT_CHANGE_TERMS) and _has_any_term(text, DEPARTURE_TERMS):
         score += 3
         reasons.append("public-media-management-change")
@@ -582,9 +751,48 @@ def _score_item(title: str, summary: str, domain: str, published: datetime | Non
     if us_callsign_hit and _has_any_term(text, STATION_TURMOIL_TERMS):
         score += 5
         reasons.append("callsign+station-turmoil")
+    if us_callsign_hit and _has_any_term(text, OWNERSHIP_DISPOSITION_TERMS):
+        score += 6
+        reasons.append("callsign+ownership-disposition")
     if weak_brand_hits and station_operation_disruption:
         score += 6
         reasons.append("weak-brand+station-operations-disruption")
+    # Google News appends the publisher to titles (for example, "... put on leave - NPR").
+    # Ignore that attribution when deciding whether the story itself describes disaffiliation.
+    network_signal_text = _headline_core(title) if _canonical_domain(domain) == "news.google.com" else text
+    network_disaffiliation = bool(weak_brand_hits) and _has_network_disaffiliation_signal(network_signal_text)
+    has_station_network_context = us_callsign_hit or _has_any_term(
+        network_signal_text,
+        [
+            "station",
+            "tv",
+            "university",
+            "college",
+            "trustees",
+            "board",
+            "commission",
+            "licensee",
+            "public television",
+            "public radio",
+            "affiliation",
+            "membership",
+            "programming",
+            "service",
+            "affiliate",
+        ],
+    )
+    named_person_leaving_network = _looks_like_named_person(title) and bool(
+        re.search(
+            r"\b(?:leave(?:s)?|leaving|left)\b(?:\W+\w+){0,4}\W+\b(?:pbs|npr)\b",
+            network_signal_text,
+            re.IGNORECASE,
+        )
+    )
+    if network_disaffiliation and named_person_leaving_network and not has_station_network_context:
+        network_disaffiliation = False
+    if network_disaffiliation:
+        score += 8
+        reasons.append("weak-brand+network-disaffiliation")
     for term in NOISE_TERMS:
         if _has_term(text, term):
             score -= 2
@@ -599,8 +807,16 @@ def _score_item(title: str, summary: str, domain: str, published: datetime | Non
     if re.fullmatch(r"\d{8}_\d+(?:\(\d+\))?", title.strip()):
         score -= 4
         reasons.append("likely-media-dump-title")
-    strong_or_critical = _has_any_term(text, CORE_KEYWORDS[:4] + CRITICAL_TERMS + PUBLIC_MEDIA_POLICY_TERMS + ["station"])
-    strong_or_critical = strong_or_critical or station_operation_disruption
+    strong_or_critical = _has_any_term(
+        text,
+        CORE_KEYWORDS[:4]
+        + CRITICAL_TERMS
+        + PUBLIC_MEDIA_POLICY_TERMS
+        + PUBLIC_MEDIA_RESCUE_GOVERNANCE_TERMS
+        + NETWORK_DISAFFILIATION_TERMS
+        + ["station"],
+    )
+    strong_or_critical = strong_or_critical or station_operation_disruption or network_disaffiliation
     if weak_brand_hits and not strong_or_critical:
         score -= 3
         reasons.append("weak-brand-only")
@@ -714,6 +930,7 @@ def dedupe_and_rank(
                 "title": raw.title,
                 "link": normalized_link or raw.link,
                 "domain": domain,
+                "headline_fp": fp,
                 "summary": raw.summary,
                 "published": published,
                 "score": score,
@@ -735,8 +952,19 @@ def dedupe_and_rank(
             entry["reasons"] = reasons[1:]
             entry["source_hint_domain"] = source_hint_domain
 
+    direct_headline_fps = {
+        i["headline_fp"]
+        for i in dedup.values()
+        if i.get("headline_fp") and _canonical_domain(i["domain"]) != "news.google.com"
+    }
+    deduped_values = [
+        i
+        for i in dedup.values()
+        if not (_canonical_domain(i["domain"]) == "news.google.com" and i.get("headline_fp") in direct_headline_fps)
+    ]
+
     all_ranked = sorted(
-        dedup.values(),
+        deduped_values,
         key=lambda i: (
             {"high": 3, "maybe": 2, "low": 1}.get(i["bucket"], 0),
             i["score"],
@@ -849,7 +1077,7 @@ def run(args: argparse.Namespace) -> dict:
 
     state = load_state(state_path)
     now = datetime.now(timezone.utc)
-    if args.mode == "update" and state.last_checked:
+    if (args.mode == "update" or args.since_last_checked) and state.last_checked:
         since = state.last_checked.astimezone(timezone.utc)
     else:
         since = now - timedelta(hours=args.window_hours)
@@ -952,6 +1180,11 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--opml", required=True, help="Path to OPML feed export")
     parser.add_argument("--mode", choices=["morning", "update"], default="morning")
     parser.add_argument("--window-hours", type=int, default=24)
+    parser.add_argument(
+        "--since-last-checked",
+        action="store_true",
+        help="Resume from state.last_checked in either mode (used by hosted runs)",
+    )
     parser.add_argument("--state", default="output/state.json")
     parser.add_argument("--out", default="output/last-run.json")
     parser.add_argument("--candidates-out", default="output/candidates.json")
