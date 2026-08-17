@@ -24,6 +24,7 @@ def make_args(tmp: Path, *, dry_run: bool, slack_webhook: str | None = None) -> 
         opml=str(opml),
         mode="morning",
         window_hours=24,
+        since_last_checked=False,
         state=str(tmp / "state.json"),
         out=str(tmp / "last-run.json"),
         candidates_out=str(tmp / "candidates.json"),
@@ -55,6 +56,24 @@ def feed_items() -> list[cli.FeedItem]:
 
 
 class StateSafetyTests(unittest.TestCase):
+    def test_morning_can_resume_from_last_checked(self) -> None:
+        with TemporaryDirectory() as tmpdir:
+            tmp = Path(tmpdir)
+            args = make_args(tmp, dry_run=True)
+            args.since_last_checked = True
+            previous = datetime(2026, 8, 17, 12, 30, tzinfo=timezone.utc)
+            (tmp / "state.json").write_text(
+                json.dumps({"last_checked": previous.isoformat(), "seen_ids": []}),
+                encoding="utf-8",
+            )
+
+            with patch.object(cli, "_fetch_url", return_value="<rss />"), patch.object(
+                cli, "_parse_feed_xml", return_value=[]
+            ):
+                payload = cli.run(args)
+
+            self.assertEqual(payload["window_start_utc"], previous.isoformat())
+
     def test_dry_run_does_not_write_state(self) -> None:
         with TemporaryDirectory() as tmpdir:
             tmp = Path(tmpdir)
