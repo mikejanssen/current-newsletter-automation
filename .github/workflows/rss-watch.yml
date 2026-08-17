@@ -19,7 +19,7 @@ on:
           - morning
           - update
       dry_run:
-        description: "Do not post to Slack or update hosted state"
+        description: "Do not post to Slack or advance hosted state"
         required: true
         default: true
         type: boolean
@@ -171,7 +171,7 @@ jobs:
           fi
 
       - name: Save hosted de-duplication state
-        if: steps.prepare.outputs.should_run == 'true' && steps.prepare.outputs.dry_run != 'true' && success()
+        if: steps.prepare.outputs.should_run == 'true' && success()
         uses: actions/cache/save@v5
         with:
           path: projects/rss-watch/output/state.json
