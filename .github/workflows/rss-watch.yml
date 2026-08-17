@@ -37,7 +37,7 @@ jobs:
 
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
 
       - name: Select the intended Eastern-time run
         id: prepare
@@ -82,14 +82,14 @@ jobs:
 
       - name: Set up Python
         if: steps.prepare.outputs.should_run == 'true'
-        uses: actions/setup-python@v5
+        uses: actions/setup-python@v6
         with:
           python-version: "3.11"
 
       - name: Restore hosted de-duplication state
         if: steps.prepare.outputs.should_run == 'true'
         id: state-cache
-        uses: actions/cache/restore@v4
+        uses: actions/cache/restore@v5
         with:
           path: projects/rss-watch/output/state.json
           key: rss-watch-state-${{ github.run_id }}
@@ -172,14 +172,14 @@ jobs:
 
       - name: Save hosted de-duplication state
         if: steps.prepare.outputs.should_run == 'true' && steps.prepare.outputs.dry_run != 'true' && success()
-        uses: actions/cache/save@v4
+        uses: actions/cache/save@v5
         with:
           path: projects/rss-watch/output/state.json
           key: rss-watch-state-${{ github.run_id }}
 
       - name: Upload briefing and diagnostics
         if: steps.prepare.outputs.should_run == 'true' && always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: rss-watch-${{ steps.prepare.outputs.mode }}-${{ github.run_id }}
           path: |
