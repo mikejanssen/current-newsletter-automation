@@ -2,12 +2,20 @@ name: RSS Watch
 
 on:
   schedule:
-    # GitHub cron is UTC. Paired triggers cover EDT and EST; the prepare
-    # step below admits only the trigger matching New York's current offset.
-    - cron: "45 12 * * 1-5"
-    - cron: "45 13 * * 1-5"
-    - cron: "0 18 * * 1-5"
-    - cron: "0 19 * * 1-5"
+    # GitHub cron is UTC. Each Eastern-time delivery gets three attempts so
+    # a delayed or dropped schedule event can recover. The prepare step admits
+    # only the entries matching New York's current offset, and a persisted
+    # completion marker prevents duplicate Slack posts.
+    - cron: "35 12 * * 1-5" # 8:35 a.m. EDT
+    - cron: "5 13 * * 1-5"  # 9:05 a.m. EDT
+    - cron: "35 13 * * 1-5" # 9:35 a.m. EDT / 8:35 a.m. EST
+    - cron: "5 14 * * 1-5"  # 9:05 a.m. EST
+    - cron: "35 14 * * 1-5" # 9:35 a.m. EST
+    - cron: "12 18 * * 1-5" # 2:12 p.m. EDT
+    - cron: "42 18 * * 1-5" # 2:42 p.m. EDT
+    - cron: "12 19 * * 1-5" # 3:12 p.m. EDT / 2:12 p.m. EST
+    - cron: "42 19 * * 1-5" # 2:42 p.m. EST
+    - cron: "12 20 * * 1-5" # 3:12 p.m. EST
   workflow_dispatch:
     inputs:
       mode:
@@ -59,10 +67,16 @@ jobs:
           utc_offset_hours = int(now_et.utcoffset().total_seconds() // 3600)
 
           scheduled = {
-              "45 12 * * 1-5": ("morning", -4),
-              "45 13 * * 1-5": ("morning", -5),
-              "0 18 * * 1-5": ("update", -4),
-              "0 19 * * 1-5": ("update", -5),
+              "35 12 * * 1-5": ("morning", -4),
+              "5 13 * * 1-5": ("morning", -4),
+              "35 13 * * 1-5": ("morning", {-4, -5}),
+              "5 14 * * 1-5": ("morning", -5),
+              "35 14 * * 1-5": ("morning", -5),
+              "12 18 * * 1-5": ("update", -4),
+              "42 18 * * 1-5": ("update", -4),
+              "12 19 * * 1-5": ("update", {-4, -5}),
+              "42 19 * * 1-5": ("update", -5),
+              "12 20 * * 1-5": ("update", -5),
           }
 
           if event_name == "workflow_dispatch":
@@ -71,7 +85,15 @@ jobs:
               dry_run = os.environ.get("MANUAL_DRY_RUN", "true").lower() == "true"
           else:
               mode, expected_offset = scheduled.get(schedule, ("", 99))
-              should_run = utc_offset_hours == expected_offset
+              expected_offsets = (
+                  expected_offset if isinstance(expected_offset, set) else {expected_offset}
+              )
+              within_window = (
+                  mode == "morning" and 7 <= now_et.hour < 12
+              ) or (
+                  mode == "update" and 13 <= now_et.hour < 18
+              )
+              should_run = utc_offset_hours in expected_offsets and within_window
               dry_run = False
 
           with open(os.environ["GITHUB_OUTPUT"], "a", encoding="utf-8") as output:
@@ -91,13 +113,52 @@ jobs:
         id: state-cache
         uses: actions/cache/restore@v5
         with:
-          path: projects/rss-watch/output/state.json
+          path: |
+            projects/rss-watch/output/state.json
+            projects/rss-watch/output/schedule-state.json
           key: rss-watch-state-${{ github.run_id }}
           restore-keys: |
             rss-watch-state-
 
-      - name: Prepare private feed configuration and initial state
+      - name: Skip a fallback after successful delivery
         if: steps.prepare.outputs.should_run == 'true'
+        id: delivery
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          RUN_MODE: ${{ steps.prepare.outputs.mode }}
+        shell: bash
+        run: |
+          python - <<'PY'
+          import datetime as dt
+          import json
+          import os
+          from pathlib import Path
+          from zoneinfo import ZoneInfo
+
+          marker_path = Path("projects/rss-watch/output/schedule-state.json")
+          try:
+              marker = json.loads(marker_path.read_text(encoding="utf-8"))
+          except (FileNotFoundError, json.JSONDecodeError):
+              marker = {}
+
+          mode = os.environ["RUN_MODE"]
+          today_et = dt.datetime.now(
+              dt.timezone.utc
+          ).astimezone(ZoneInfo("America/New_York")).date().isoformat()
+          already_completed = marker.get("completed", {}).get(mode) == today_et
+          should_execute = (
+              os.environ.get("EVENT_NAME") == "workflow_dispatch"
+              or not already_completed
+          )
+
+          with open(os.environ["GITHUB_OUTPUT"], "a", encoding="utf-8") as output:
+              output.write(
+                  f"should_execute={'true' if should_execute else 'false'}\n"
+              )
+          PY
+
+      - name: Prepare private feed configuration and initial state
+        if: steps.delivery.outputs.should_execute == 'true'
         env:
           RSS_WATCH_OPML_B64: ${{ secrets.RSS_WATCH_OPML_B64 }}
         shell: bash
@@ -127,7 +188,7 @@ jobs:
           fi
 
       - name: Run RSS Watch
-        if: steps.prepare.outputs.should_run == 'true'
+        if: steps.delivery.outputs.should_execute == 'true'
         env:
           SLACK_WEBHOOK_URL: ${{ secrets.RSS_WATCH_SLACK_WEBHOOK_URL }}
           RUN_MODE: ${{ steps.prepare.outputs.mode }}
@@ -170,15 +231,47 @@ jobs:
           PY
           fi
 
+      - name: Record successful delivery
+        if: steps.delivery.outputs.should_execute == 'true' && steps.prepare.outputs.dry_run != 'true' && success()
+        env:
+          RUN_MODE: ${{ steps.prepare.outputs.mode }}
+        shell: bash
+        run: |
+          python - <<'PY'
+          import datetime as dt
+          import json
+          import os
+          from pathlib import Path
+          from zoneinfo import ZoneInfo
+
+          marker_path = Path("projects/rss-watch/output/schedule-state.json")
+          try:
+              marker = json.loads(marker_path.read_text(encoding="utf-8"))
+          except (FileNotFoundError, json.JSONDecodeError):
+              marker = {}
+
+          completed = marker.setdefault("completed", {})
+          completed[os.environ["RUN_MODE"]] = dt.datetime.now(
+              dt.timezone.utc
+          ).astimezone(ZoneInfo("America/New_York")).date().isoformat()
+          marker_path.parent.mkdir(parents=True, exist_ok=True)
+          marker_path.write_text(
+              json.dumps(marker, indent=2, sort_keys=True) + "\n",
+              encoding="utf-8",
+          )
+          PY
+
       - name: Save hosted de-duplication state
-        if: steps.prepare.outputs.should_run == 'true' && success()
+        if: steps.delivery.outputs.should_execute == 'true' && success()
         uses: actions/cache/save@v5
         with:
-          path: projects/rss-watch/output/state.json
+          path: |
+            projects/rss-watch/output/state.json
+            projects/rss-watch/output/schedule-state.json
           key: rss-watch-state-${{ github.run_id }}
 
       - name: Upload briefing and diagnostics
-        if: steps.prepare.outputs.should_run == 'true' && always()
+        if: steps.delivery.outputs.should_execute == 'true' && always()
         uses: actions/upload-artifact@v7
         with:
           name: rss-watch-${{ steps.prepare.outputs.mode }}-${{ github.run_id }}
