@@ -1,0 +1,25 @@
+name = "current-rss-watch-scheduler"
+main = "src/index.js"
+compatibility_date = "2026-08-27"
+
+[triggers]
+crons = [
+  "35 12 * * 1-5",
+  "5 13 * * 1-5",
+  "35 13 * * 1-5",
+  "5 14 * * 1-5",
+  "35 14 * * 1-5",
+  "12 18 * * 1-5",
+  "42 18 * * 1-5",
+  "12 19 * * 1-5",
+  "42 19 * * 1-5",
+  "12 20 * * 1-5",
+]
+
+[vars]
+GITHUB_OWNER = "mikejanssen"
+GITHUB_REPO = "current-newsletter-automation"
+GITHUB_WORKFLOW = "rss-watch.yml"
+
+[observability.logs]
+enabled = true
