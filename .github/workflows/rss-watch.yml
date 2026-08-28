@@ -1,21 +1,6 @@
 name: RSS Watch
 
 on:
-  schedule:
-    # GitHub cron is UTC. Each Eastern-time delivery gets three attempts so
-    # a delayed or dropped schedule event can recover. The prepare step admits
-    # only the entries matching New York's current offset, and a persisted
-    # completion marker prevents duplicate Slack posts.
-    - cron: "35 12 * * 1-5" # 8:35 a.m. EDT
-    - cron: "5 13 * * 1-5"  # 9:05 a.m. EDT
-    - cron: "35 13 * * 1-5" # 9:35 a.m. EDT / 8:35 a.m. EST
-    - cron: "5 14 * * 1-5"  # 9:05 a.m. EST
-    - cron: "35 14 * * 1-5" # 9:35 a.m. EST
-    - cron: "12 18 * * 1-5" # 2:12 p.m. EDT
-    - cron: "42 18 * * 1-5" # 2:42 p.m. EDT
-    - cron: "12 19 * * 1-5" # 3:12 p.m. EDT / 2:12 p.m. EST
-    - cron: "42 19 * * 1-5" # 2:42 p.m. EST
-    - cron: "12 20 * * 1-5" # 3:12 p.m. EST
   workflow_dispatch:
     inputs:
       mode:
@@ -30,6 +15,11 @@ on:
         description: "Do not post to Slack or advance hosted state"
         required: true
         default: true
+        type: boolean
+      scheduled_delivery:
+        description: "Apply the external scheduler's time-window and duplicate safeguards"
+        required: true
+        default: false
         type: boolean
 
 concurrency:
@@ -50,10 +40,9 @@ jobs:
       - name: Select the intended Eastern-time run
         id: prepare
         env:
-          EVENT_NAME: ${{ github.event_name }}
-          EVENT_SCHEDULE: ${{ github.event.schedule }}
           MANUAL_MODE: ${{ inputs.mode }}
           MANUAL_DRY_RUN: ${{ inputs.dry_run }}
+          SCHEDULED_DELIVERY: ${{ inputs.scheduled_delivery }}
         shell: bash
         run: |
           python - <<'PY'
@@ -61,40 +50,22 @@ jobs:
           import os
           from zoneinfo import ZoneInfo
 
-          event_name = os.environ.get("EVENT_NAME", "")
-          schedule = os.environ.get("EVENT_SCHEDULE", "")
           now_et = dt.datetime.now(dt.timezone.utc).astimezone(ZoneInfo("America/New_York"))
-          utc_offset_hours = int(now_et.utcoffset().total_seconds() // 3600)
-
-          scheduled = {
-              "35 12 * * 1-5": ("morning", -4),
-              "5 13 * * 1-5": ("morning", -4),
-              "35 13 * * 1-5": ("morning", {-4, -5}),
-              "5 14 * * 1-5": ("morning", -5),
-              "35 14 * * 1-5": ("morning", -5),
-              "12 18 * * 1-5": ("update", -4),
-              "42 18 * * 1-5": ("update", -4),
-              "12 19 * * 1-5": ("update", {-4, -5}),
-              "42 19 * * 1-5": ("update", -5),
-              "12 20 * * 1-5": ("update", -5),
-          }
-
-          if event_name == "workflow_dispatch":
-              should_run = True
-              mode = os.environ.get("MANUAL_MODE") or "morning"
-              dry_run = os.environ.get("MANUAL_DRY_RUN", "true").lower() == "true"
-          else:
-              mode, expected_offset = scheduled.get(schedule, ("", 99))
-              expected_offsets = (
-                  expected_offset if isinstance(expected_offset, set) else {expected_offset}
-              )
-              within_window = (
-                  mode == "morning" and 7 <= now_et.hour < 12
-              ) or (
-                  mode == "update" and 13 <= now_et.hour < 18
-              )
-              should_run = utc_offset_hours in expected_offsets and within_window
-              dry_run = False
+          mode = os.environ.get("MANUAL_MODE") or "morning"
+          scheduled_delivery = (
+              os.environ.get("SCHEDULED_DELIVERY", "false").lower() == "true"
+          )
+          within_window = (
+              mode == "morning" and 7 <= now_et.hour < 12
+          ) or (
+              mode == "update" and 13 <= now_et.hour < 18
+          )
+          should_run = not scheduled_delivery or within_window
+          dry_run = (
+              False
+              if scheduled_delivery
+              else os.environ.get("MANUAL_DRY_RUN", "true").lower() == "true"
+          )
 
           with open(os.environ["GITHUB_OUTPUT"], "a", encoding="utf-8") as output:
               output.write(f"should_run={'true' if should_run else 'false'}\n")
@@ -124,8 +95,8 @@ jobs:
         if: steps.prepare.outputs.should_run == 'true'
         id: delivery
         env:
-          EVENT_NAME: ${{ github.event_name }}
           RUN_MODE: ${{ steps.prepare.outputs.mode }}
+          SCHEDULED_DELIVERY: ${{ inputs.scheduled_delivery }}
         shell: bash
         run: |
           python - <<'PY'
@@ -147,7 +118,7 @@ jobs:
           ).astimezone(ZoneInfo("America/New_York")).date().isoformat()
           already_completed = marker.get("completed", {}).get(mode) == today_et
           should_execute = (
-              os.environ.get("EVENT_NAME") == "workflow_dispatch"
+              os.environ.get("SCHEDULED_DELIVERY", "false").lower() != "true"
               or not already_completed
           )
 
