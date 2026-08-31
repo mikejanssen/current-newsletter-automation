@@ -1,5 +1,5 @@
-const MORNING_CRON = "5,35 12-14 * * 1-5";
-const UPDATE_CRON = "12,42 18-20 * * 1-5";
+const MORNING_CRON = "5,35 12-14 * * 2-6";
+const UPDATE_CRON = "12,42 18-20 * * 2-6";
 
 const DELIVERY_TIMES = {
   morning: new Set(["8:35", "9:05", "9:35"]),
