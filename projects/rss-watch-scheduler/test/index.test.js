@@ -4,19 +4,19 @@ import test from "node:test";
 import { dispatchWorkflow, selectDelivery } from "../src/index.js";
 
 test("selects EDT morning and update deliveries", () => {
-  assert.equal(selectDelivery("5,35 12-14 * * 1-5", Date.parse("2026-08-28T12:35:00Z")), "morning");
-  assert.equal(selectDelivery("12,42 18-20 * * 1-5", Date.parse("2026-08-28T18:12:00Z")), "update");
+  assert.equal(selectDelivery("5,35 12-14 * * 2-6", Date.parse("2026-08-28T12:35:00Z")), "morning");
+  assert.equal(selectDelivery("12,42 18-20 * * 2-6", Date.parse("2026-08-28T18:12:00Z")), "update");
 });
 
 test("selects EST morning and update deliveries", () => {
-  assert.equal(selectDelivery("5,35 12-14 * * 1-5", Date.parse("2026-12-04T13:35:00Z")), "morning");
-  assert.equal(selectDelivery("12,42 18-20 * * 1-5", Date.parse("2026-12-04T19:12:00Z")), "update");
+  assert.equal(selectDelivery("5,35 12-14 * * 2-6", Date.parse("2026-12-04T13:35:00Z")), "morning");
+  assert.equal(selectDelivery("12,42 18-20 * * 2-6", Date.parse("2026-12-04T19:12:00Z")), "update");
 });
 
 test("skips the inactive daylight-saving counterpart", () => {
-  assert.equal(selectDelivery("5,35 12-14 * * 1-5", Date.parse("2026-08-28T12:05:00Z")), null);
-  assert.equal(selectDelivery("5,35 12-14 * * 1-5", Date.parse("2026-12-04T12:35:00Z")), null);
-  assert.equal(selectDelivery("12,42 18-20 * * 1-5", Date.parse("2026-08-28T20:42:00Z")), null);
+  assert.equal(selectDelivery("5,35 12-14 * * 2-6", Date.parse("2026-08-28T12:05:00Z")), null);
+  assert.equal(selectDelivery("5,35 12-14 * * 2-6", Date.parse("2026-12-04T12:35:00Z")), null);
+  assert.equal(selectDelivery("12,42 18-20 * * 2-6", Date.parse("2026-08-28T20:42:00Z")), null);
 });
 
 test("dispatches a protected scheduled delivery", async () => {
