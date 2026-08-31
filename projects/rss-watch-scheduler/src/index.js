@@ -1,53 +1,38 @@
-const SCHEDULES = {
-  "35 12 * * 1-5": { mode: "morning", offsets: [-4] },
-  "5 13 * * 1-5": { mode: "morning", offsets: [-4] },
-  "35 13 * * 1-5": { mode: "morning", offsets: [-4, -5] },
-  "5 14 * * 1-5": { mode: "morning", offsets: [-5] },
-  "35 14 * * 1-5": { mode: "morning", offsets: [-5] },
-  "12 18 * * 1-5": { mode: "update", offsets: [-4] },
-  "42 18 * * 1-5": { mode: "update", offsets: [-4] },
-  "12 19 * * 1-5": { mode: "update", offsets: [-4, -5] },
-  "42 19 * * 1-5": { mode: "update", offsets: [-5] },
-  "12 20 * * 1-5": { mode: "update", offsets: [-5] },
+const MORNING_CRON = "5,35 12-14 * * 1-5";
+const UPDATE_CRON = "12,42 18-20 * * 1-5";
+
+const DELIVERY_TIMES = {
+  morning: new Set(["8:35", "9:05", "9:35"]),
+  update: new Set(["14:12", "14:42", "15:12"]),
 };
 
 function newYorkParts(date) {
   const formatter = new Intl.DateTimeFormat("en-US", {
     timeZone: "America/New_York",
     hour: "numeric",
+    minute: "2-digit",
     hourCycle: "h23",
-    timeZoneName: "longOffset",
   });
   const parts = Object.fromEntries(
     formatter.formatToParts(date).map(({ type, value }) => [type, value]),
   );
-  const offsetMatch = parts.timeZoneName.match(/^GMT([+-])(\d{2}):?(\d{2})$/);
-  if (!offsetMatch) {
-    throw new Error(`Could not parse New York UTC offset: ${parts.timeZoneName}`);
-  }
-  const sign = offsetMatch[1] === "+" ? 1 : -1;
-  const offsetHours = sign * (
-    Number(offsetMatch[2]) + Number(offsetMatch[3]) / 60
-  );
-  return { hour: Number(parts.hour), offsetHours };
+  return { hour: Number(parts.hour), minute: Number(parts.minute) };
 }
 
 export function selectDelivery(cron, scheduledTime) {
-  const candidate = SCHEDULES[cron];
-  if (!candidate) {
+  const mode = cron === MORNING_CRON
+    ? "morning"
+    : cron === UPDATE_CRON
+      ? "update"
+      : null;
+  if (!mode) {
     return null;
   }
 
-  const { hour, offsetHours } = newYorkParts(new Date(scheduledTime));
-  const withinWindow = (
-    candidate.mode === "morning" && hour >= 7 && hour < 12
-  ) || (
-    candidate.mode === "update" && hour >= 13 && hour < 18
-  );
-  if (!candidate.offsets.includes(offsetHours) || !withinWindow) {
-    return null;
-  }
-  return candidate.mode;
+  const { hour, minute } = newYorkParts(new Date(scheduledTime));
+  return DELIVERY_TIMES[mode].has(`${hour}:${String(minute).padStart(2, "0")}`)
+    ? mode
+    : null;
 }
 
 export async function dispatchWorkflow(env, mode, fetchImpl = fetch) {

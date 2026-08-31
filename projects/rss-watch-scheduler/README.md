@@ -9,6 +9,11 @@ persisted daily completion marker allows only the first successful attempt to
 post to Slack. Both the worker and workflow reject stale scheduled deliveries
 outside the intended Eastern-time window.
 
+The six daily UTC checks are consolidated into two cron patterns to stay within
+Cloudflare's free-plan trigger limit. The worker filters those checks to the
+three intended Eastern-time attempts for each delivery, including daylight
+saving time changes.
+
 ## Configuration
 
 Set `GITHUB_ACTIONS_TOKEN` as a Cloudflare Worker secret. Use a fine-grained
