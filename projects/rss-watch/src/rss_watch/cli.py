@@ -633,6 +633,18 @@ def load_feed_urls_from_opml(opml_path: Path) -> list[tuple[str, str]]:
     return feeds
 
 
+def load_feed_urls_from_opml_files(opml_paths: Iterable[Path]) -> list[tuple[str, str]]:
+    feeds: list[tuple[str, str]] = []
+    seen: set[str] = set()
+    for opml_path in opml_paths:
+        for title, url in load_feed_urls_from_opml(opml_path):
+            if url in seen:
+                continue
+            seen.add(url)
+            feeds.append((title, url))
+    return feeds
+
+
 def _fetch_url(url: str, timeout_seconds: int, retries: int) -> str:
     last_error: Exception | None = None
     for attempt in range(retries + 1):
@@ -1097,6 +1109,7 @@ def _render_slack_text(mode: str, counts: dict[str, int], items: list[RankedItem
 
 def run(args: argparse.Namespace) -> dict:
     opml_path = Path(args.opml)
+    additional_opml_paths = [Path(path) for path in getattr(args, "additional_opml", [])]
     state_path = Path(args.state)
     out_path = Path(args.out)
     brief_path = Path(args.brief)
@@ -1109,7 +1122,7 @@ def run(args: argparse.Namespace) -> dict:
     else:
         since = now - timedelta(hours=args.window_hours)
 
-    feeds = load_feed_urls_from_opml(opml_path)
+    feeds = load_feed_urls_from_opml_files([opml_path, *additional_opml_paths])
     if args.max_feeds is not None:
         feeds = feeds[: args.max_feeds]
     all_items: list[FeedItem] = []
@@ -1205,6 +1218,12 @@ def run(args: argparse.Namespace) -> dict:
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description="RSS Watch")
     parser.add_argument("--opml", required=True, help="Path to OPML feed export")
+    parser.add_argument(
+        "--additional-opml",
+        action="append",
+        default=[],
+        help="Additional OPML feed file; may be supplied more than once",
+    )
     parser.add_argument("--mode", choices=["morning", "update"], default="morning")
     parser.add_argument("--window-hours", type=int, default=24)
     parser.add_argument(

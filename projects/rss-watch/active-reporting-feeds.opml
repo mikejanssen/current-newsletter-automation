@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<opml version="2.0">
+  <head>
+    <title>RSS Watch active reporting feeds</title>
+  </head>
+  <body>
+    <outline text="WOUB active reporting watch" title="WOUB active reporting watch">
+      <outline text="WOUB Public Media" title="WOUB Public Media" type="rss" xmlUrl="https://woub.org/feed/" htmlUrl="https://woub.org/" />
+      <outline text="WOUB - Google News" title="WOUB - Google News" type="rss" xmlUrl="https://news.google.com/rss/search?q=WOUB&amp;hl=en-US&amp;gl=US&amp;ceid=US:en" htmlUrl="https://news.google.com/search?q=WOUB&amp;hl=en-US&amp;gl=US&amp;ceid=US:en" />
+      <outline text="Mark Brewer and WOUB - Google News" title="Mark Brewer and WOUB - Google News" type="rss" xmlUrl="https://news.google.com/rss/search?q=%22Mark%20Brewer%22%20WOUB&amp;hl=en-US&amp;gl=US&amp;ceid=US:en" htmlUrl="https://news.google.com/search?q=%22Mark%20Brewer%22%20WOUB&amp;hl=en-US&amp;gl=US&amp;ceid=US:en" />
+      <outline text="Caitlin Mohler and Ohio University - Google News" title="Caitlin Mohler and Ohio University - Google News" type="rss" xmlUrl="https://news.google.com/rss/search?q=%22Caitlin%20Mohler%22%20%22Ohio%20University%22&amp;hl=en-US&amp;gl=US&amp;ceid=US:en" htmlUrl="https://news.google.com/search?q=%22Caitlin%20Mohler%22%20%22Ohio%20University%22&amp;hl=en-US&amp;gl=US&amp;ceid=US:en" />
+    </outline>
+  </body>
+</opml>

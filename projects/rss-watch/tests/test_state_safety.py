@@ -56,6 +56,33 @@ def feed_items() -> list[cli.FeedItem]:
 
 
 class StateSafetyTests(unittest.TestCase):
+    def test_additional_opml_feeds_are_combined_and_deduplicated(self) -> None:
+        with TemporaryDirectory() as tmpdir:
+            tmp = Path(tmpdir)
+            primary = tmp / "primary.opml"
+            additional = tmp / "additional.opml"
+            primary.write_text(
+                '<opml version="2.0"><body><outline text="Primary" xmlUrl="https://example.test/feed.xml"/></body></opml>',
+                encoding="utf-8",
+            )
+            additional.write_text(
+                '<opml version="2.0"><body>'
+                '<outline text="Duplicate" xmlUrl="https://example.test/feed.xml"/>'
+                '<outline text="Active watch" xmlUrl="https://example.test/active.xml"/>'
+                '</body></opml>',
+                encoding="utf-8",
+            )
+
+            feeds = cli.load_feed_urls_from_opml_files([primary, additional])
+
+            self.assertEqual(
+                feeds,
+                [
+                    ("Primary", "https://example.test/feed.xml"),
+                    ("Active watch", "https://example.test/active.xml"),
+                ],
+            )
+
     def test_morning_can_resume_from_last_checked(self) -> None:
         with TemporaryDirectory() as tmpdir:
             tmp = Path(tmpdir)
