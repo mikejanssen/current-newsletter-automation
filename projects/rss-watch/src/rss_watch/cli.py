@@ -128,6 +128,21 @@ PUBLIC_MEDIA_LEGAL_DISPUTE_TERMS = [
     "station alleges",
 ]
 
+# Temporary reporting priorities for the active WOUB/Mark Brewer records story.
+# Keep these narrow so routine WOUB programming, sports, and culture posts retain
+# their normal scores.
+ACTIVE_REPORTING_WOUB_TERMS = PUBLIC_MEDIA_LEGAL_DISPUTE_TERMS + [
+    "sexual harassment",
+    "sexual misconduct",
+    "harassment",
+    "misconduct",
+    "resign",
+    "resigns",
+    "resigned",
+    "resignation",
+    "general manager",
+]
+
 PUBLIC_MEDIA_OPERATOR_SELECTION_TERMS = [
     "franchise",
     "take over",
@@ -701,6 +716,18 @@ def _score_item(title: str, summary: str, domain: str, published: datetime | Non
     station_operation_disruption = _has_any_term(text, STATION_OPERATION_TERMS) and _has_any_term(
         text, OPERATION_DISRUPTION_TERMS
     )
+
+    active_brewer_hit = _has_term(text, "mark brewer") and (
+        _has_term(text, "woub")
+        or _has_term(text, "ohio university")
+        or _has_any_term(text, ACTIVE_REPORTING_WOUB_TERMS)
+    )
+    if _has_term(text, "caitlin mohler") or active_brewer_hit:
+        score += 10
+        reasons.append("active-reporting-person")
+    elif _has_term(text, "woub") and _has_any_term(text, ACTIVE_REPORTING_WOUB_TERMS):
+        score += 8
+        reasons.append("active-reporting-woub")
 
     # Promote "community radio" only when it appears in headline/title with U.S. station context.
     if _has_term(title_text, "community radio"):

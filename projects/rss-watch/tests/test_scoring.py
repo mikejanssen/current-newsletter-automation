@@ -7,6 +7,42 @@ from rss_watch import cli
 
 
 class ScoringTests(unittest.TestCase):
+    def test_active_woub_legal_story_is_high_priority(self) -> None:
+        score, reasons = cli._score_item(
+            "Ohio University is sued in federal court over sexual harassment allegations - WOUB Public Media",
+            "",
+            "news.google.com",
+            None,
+        )
+
+        self.assertGreaterEqual(score, 8)
+        self.assertEqual(reasons[0], "high")
+        self.assertIn("active-reporting-woub", reasons)
+
+    def test_active_reporting_person_is_high_priority(self) -> None:
+        score, reasons = cli._score_item(
+            "Caitlin Mohler files lawsuit against Ohio University",
+            "The case concerns allegations involving WOUB.",
+            "example.test",
+            None,
+        )
+
+        self.assertGreaterEqual(score, 8)
+        self.assertEqual(reasons[0], "high")
+        self.assertIn("active-reporting-person", reasons)
+
+    def test_routine_woub_story_is_not_promoted(self) -> None:
+        score, reasons = cli._score_item(
+            "WOUB announces its fall high school football schedule",
+            "The station will carry games from schools across southeast Ohio.",
+            "woub.org",
+            None,
+        )
+
+        self.assertLess(score, 5)
+        self.assertEqual(reasons[0], "low")
+        self.assertNotIn("active-reporting-woub", reasons)
+
     def test_pbs_station_archive_legal_dispute_is_high_priority(self) -> None:
         score, reasons = cli._score_item(
             "70 years of St. Louis history is stuck in a Denver data center, PBS station claims - The Denver Post",
