@@ -7,6 +7,25 @@ from rss_watch import cli
 
 
 class ScoringTests(unittest.TestCase):
+    def test_station_roster_promotes_known_local_operational_news(self) -> None:
+        stations = frozenset({"WYSU", "WMNF", "wisconsin public radio"})
+        for title in (
+            "Dominic Nardella Departs WNCX to Become WYSU Station Director",
+            "WMNF welcomes Alex Worthey as new general manager",
+            "Wisconsin Public Radio names new executive general manager",
+            "WYSU announces layoffs",
+            "WMNF goes dark",
+        ):
+            with self.subTest(title=title):
+                score, reasons = cli._score_item(title, "", "example.test", None, stations)
+                self.assertGreaterEqual(score, 8)
+                self.assertIn("public-station-operations", reasons)
+        for title in ("WNCX welcomes a new general manager", "WMNF announces its fall music lineup",
+                      "Local nonprofit hires a new president - WMNF"):
+            with self.subTest(title=title):
+                _, reasons = cli._score_item(title, "", "news.google.com", None, stations)
+                self.assertNotIn("public-station-operations", reasons)
+
     def test_pbs_charlotte_departure_from_google_news_is_high_priority(self) -> None:
         title = "PBS Charlotte leader departs - https://www.thecharlotteledger.com/"
         score, reasons = cli._score_item(title, title, "news.google.com", None)

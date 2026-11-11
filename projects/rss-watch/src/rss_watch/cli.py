@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import argparse
 from concurrent.futures import ThreadPoolExecutor, as_completed
+import csv
 import hashlib
 import html
 import json
@@ -597,6 +598,28 @@ def _has_us_call_sign(text: str) -> bool:
     return False
 
 
+def _load_station_names(path: Path) -> frozenset[str]:
+    names = set()
+    with path.open(encoding="utf-8-sig", newline="") as handle:
+        for row in csv.DictReader(handle):
+            name = (row.get("Grantee Name") or "").strip()
+            call_sign = re.fullmatch(r"([KW][A-Z]{2,4})(?:-(?:FM|TV|DT|AM|LP))?", name)
+            if call_sign:
+                names.add(call_sign[1])
+            elif _has_any_term(name.lower(), CORE_KEYWORDS + ["community radio"]):
+                names.add(name.lower())
+    if not names:
+        raise ValueError(f"No public station names found in {path}")
+    return frozenset(names)
+
+
+def _matches_station(text: str, names: frozenset[str]) -> bool:
+    for match in re.finditer(r"\b[KW][A-Z]{2,4}\b", text):
+        if match[0] in names:
+            return True
+    return _has_any_term(text.lower(), (name for name in names if not name.isupper()))
+
+
 def _has_substantive_public_media_signal(text: str) -> bool:
     return _has_any_term(
         text,
@@ -677,6 +700,8 @@ def _choose_atom_link(entry: ET.Element) -> str:
 
 def _parse_feed_xml(xml_text: str, default_feed_title: str) -> list[FeedItem]:
     root = ET.fromstring(xml_text)
+    if root.tag.rsplit("}", 1)[-1].lower() not in {"rss", "rdf", "feed"}:
+        raise ValueError("Response is not an RSS or Atom feed")
     items: list[FeedItem] = []
     if root.tag.lower().endswith("rss") or root.tag.lower().endswith("rdf"):
         channel = root.find("./channel")
@@ -717,7 +742,8 @@ def _parse_feed_xml(xml_text: str, default_feed_title: str) -> list[FeedItem]:
     return items
 
 
-def _score_item(title: str, summary: str, domain: str, published: datetime | None) -> tuple[int, list[str]]:
+def _score_item(title: str, summary: str, domain: str, published: datetime | None,
+                station_names: frozenset[str] = frozenset()) -> tuple[int, list[str]]:
     raw_text = _plain_text(f"{title} {summary}")
     text = raw_text.lower()
     title_text = title.lower()
@@ -874,6 +900,23 @@ def _score_item(title: str, summary: str, domain: str, published: datetime | Non
         score -= 3
         reasons.append("weak-brand-only")
 
+    if station_names:
+        station_headline = title.rsplit(" - ", 1)[0] if _canonical_domain(domain) == "news.google.com" else title
+        if _matches_station(station_headline, station_names):
+            leadership = _has_any_term(headline, MANAGEMENT_CHANGE_TERMS + [
+                "station director", "executive director", "president", "ceo", "leader", "chief executive",
+            ]) and _has_any_term(headline, DEPARTURE_TERMS + LEADERSHIP_APPOINTMENT_TERMS + [
+                "new", "welcomes", "to become", "returns home as",
+            ])
+            station_change = _has_any_term(headline, OWNERSHIP_DISPOSITION_TERMS + [
+                "acquires", "merger", "merge", "layoff", "layoffs", "job cuts",
+                "shuts down", "shutdown", "goes dark", "ends broadcasting", "ceases broadcasting",
+                "funding cuts", "cuts programming", "ends local news",
+            ])
+            if leadership or station_change:
+                score = max(8, score)
+                reasons.append("public-station-operations")
+
     if core_public_hits:
         non_us_term_hit = _has_any_term(text, NON_US_SIGNAL_TERMS)
         if non_us_term_hit and not (us_term_hit or us_callsign_hit):
@@ -939,6 +982,7 @@ def dedupe_and_rank(
     seen_ids: set[str],
     max_items: int,
     max_item_age_days: int,
+    station_names: frozenset[str] = frozenset(),
 ) -> tuple[list[RankedItem], list[RankedItem], dict[str, int]]:
     dedup: dict[str, dict] = {}
     now = datetime.now(timezone.utc)
@@ -963,7 +1007,7 @@ def dedupe_and_rank(
         if not include_seen and item_id in seen_ids:
             continue
 
-        score, reasons = _score_item(raw.title, raw.summary, domain, published)
+        score, reasons = _score_item(raw.title, raw.summary, domain, published, station_names)
         text = _plain_text(f"{raw.title} {raw.summary}").lower()
         if source_hint_domain in LOW_SIGNAL_DOMAINS:
             if _is_public_media_commentary(text):
@@ -1105,10 +1149,15 @@ def _render_briefing(
     return "\n".join(lines).rstrip() + "\n"
 
 
-def _render_slack_text(mode: str, counts: dict[str, int], items: list[RankedItem], failures: list[dict[str, str]], max_items: int) -> str:
+def _slack_items(items: list[RankedItem], limit: int) -> list[RankedItem]:
+    return [item for item in items if item.bucket in {"high", "maybe"}][:limit]
+
+
+def _render_slack_text(mode: str, counts: dict[str, int], items: list[RankedItem], failures: list[dict[str, str]], max_items: int,
+                       failure_streaks: dict[str, int] | None = None) -> str:
     lines = [f"RSS Watch — {datetime.now(timezone.utc):%Y-%m-%d} ({mode})"]
 
-    selected = [item for item in items if item.bucket in {"high", "maybe"}][:max_items]
+    selected = _slack_items(items, max_items)
     if selected:
         lines.append("")
         lines.append("Top items")
@@ -1117,6 +1166,17 @@ def _render_slack_text(mode: str, counts: dict[str, int], items: list[RankedItem
     else:
         lines.append("")
         lines.append("No high/maybe items in this run.")
+
+    overflow = counts["high"] + counts["maybe"] - len(selected)
+    if overflow > 0:
+        lines.append(f"{overflow} more qualifying items stayed eligible for a later digest.")
+
+    if failures:
+        persistent = sorted({failure["feed"] for failure in failures
+                             if (failure_streaks or {}).get(failure["url"], 0) >= 2})
+        lines.extend(["", f"Feed checks failed for {len(failures)} sources."])
+        if persistent and mode == "morning":
+            lines.append("Failed on consecutive scans: " + ", ".join(persistent))
 
     return "\n".join(lines)
 
@@ -1130,11 +1190,16 @@ def run(args: argparse.Namespace) -> dict:
     candidates_path = Path(args.candidates_out)
 
     state = load_state(state_path)
+    roster_path = getattr(args, "station_roster", None)
+    station_names = _load_station_names(Path(roster_path)) if roster_path else frozenset()
     now = datetime.now(timezone.utc)
     if (args.mode == "update" or args.since_last_checked) and state.last_checked:
         since = state.last_checked.astimezone(timezone.utc)
     else:
         since = now - timedelta(hours=args.window_hours)
+    overlap_hours = getattr(args, "overlap_hours", 0)
+    if overlap_hours:
+        since = min(since, now - timedelta(hours=overlap_hours))
 
     feeds = load_feed_urls_from_opml_files([opml_path, *additional_opml_paths])
     if args.max_feeds is not None:
@@ -1158,6 +1223,11 @@ def run(args: argparse.Namespace) -> dict:
             if failure:
                 failures.append(failure)
 
+    failed_urls = {failure["url"] for failure in failures}
+    checked_urls = {url for _, url in feeds}
+    failure_streaks = {url: streak for url, streak in state.feed_failure_streaks.items()
+                       if url not in checked_urls and args.max_feeds is not None}
+    failure_streaks.update({url: state.feed_failure_streaks.get(url, 0) + 1 for url in failed_urls})
     ranked, all_ranked, counts = dedupe_and_rank(
         items=all_items,
         since=since,
@@ -1165,16 +1235,20 @@ def run(args: argparse.Namespace) -> dict:
         seen_ids=set(state.seen_ids),
         max_items=args.max_items,
         max_item_age_days=args.max_item_age_days,
+        station_names=station_names,
     )
 
+    slack_item_ids = [item.item_id for item in _slack_items(ranked, args.slack_max_items)]
     payload = {
         "mode": args.mode,
         "window_start_utc": since.isoformat(),
         "feed_count": len(feeds),
         "fetch_failures": failures,
+        "persistent_feed_failures": [failure for failure in failures if failure_streaks[failure["url"]] >= 2],
         "candidate_count": len(all_ranked),
         "counts": counts,
         "items": [asdict(item) for item in ranked],
+        "slack_item_ids": slack_item_ids,
         "slack_status": "not_attempted",
         "slack_error": "",
         "state_updated": False,
@@ -1209,7 +1283,7 @@ def run(args: argparse.Namespace) -> dict:
         return payload
 
     if args.slack_webhook:
-        slack_text = _render_slack_text(args.mode, counts, ranked, failures, args.slack_max_items)
+        slack_text = _render_slack_text(args.mode, counts, ranked, failures, args.slack_max_items, failure_streaks)
         try:
             post_to_slack(args.slack_webhook, SlackMessage(text=slack_text))
         except SlackPostError as err:
@@ -1220,9 +1294,12 @@ def run(args: argparse.Namespace) -> dict:
             return payload
         payload["slack_status"] = "sent"
 
-    state.seen_ids.extend([item.item_id for item in ranked])
+    delivered_ids = set(slack_item_ids)
+    state.seen_ids.extend(item.item_id for item in ranked
+                          if not args.slack_webhook or item.bucket == "low" or item.item_id in delivered_ids)
     state.seen_ids = state.seen_ids[-8000:]
     state.last_checked = now
+    state.feed_failure_streaks = failure_streaks
     save_state(state_path, state)
     payload["state_updated"] = True
     out_path.write_text(json.dumps(payload, indent=2, sort_keys=True), encoding="utf-8")
@@ -1240,6 +1317,9 @@ def build_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument("--mode", choices=["morning", "update"], default="morning")
     parser.add_argument("--window-hours", type=int, default=24)
+    parser.add_argument("--overlap-hours", type=int, choices=range(0, 169), metavar="0–168", default=0,
+                        help="Minimum lookback from scan time when resuming from a checkpoint")
+    parser.add_argument("--station-roster", help="CPB grantee CSV used to recognize public station names and call signs")
     parser.add_argument(
         "--since-last-checked",
         action="store_true",

@@ -38,6 +38,8 @@ PYTHONPATH=src python3 -m rss_watch.cli \
 - `--candidates-out` default: `output/candidates.json`
 - `--brief` default: `output/briefing.md`
 - `--window-hours` default: `24` (used by `morning` mode)
+- `--overlap-hours` keeps a minimum lookback even when resuming from a saved checkpoint
+- `--station-roster` loads known public station call signs and brands from a CPB grantee CSV
 - `--max-items` default: `200`
 - `--max-item-age-days` default: `30` (exclude stale resurfaced items; `0` disables)
 - `--include-low` include low-priority section in briefing
@@ -98,5 +100,11 @@ The workflow requires these GitHub Actions secrets:
 
 - `RSS_WATCH_OPML_B64`: base64-encoded contents of the current OPML export
 - `RSS_WATCH_SLACK_WEBHOOK_URL`: Slack incoming-webhook URL
+
+Hosted scans overlap by 72 hours and use the shared CPB grantee roster to recognize
+station leadership and operating changes. Slack shows feed failure counts on each
+scan and identifies consecutive failures in the morning briefing. Qualifying
+stories beyond the Slack limit remain eligible for a later scan within the lookback.
+The hosted run report records the selected Slack item IDs for coverage audits.
 
 Manual runs default to dry-run mode and upload their briefing and JSON output as a workflow artifact. A successful dry run also seeds the hosted checkpoint when no cache exists, without posting to Slack or advancing an existing checkpoint. Scheduled runs post to Slack and update the hosted state only after a successful post.

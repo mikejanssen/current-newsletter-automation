@@ -178,6 +178,8 @@ jobs:
             --mode "$RUN_MODE"
             --window-hours 72
             --since-last-checked
+            --overlap-hours 72
+            --station-roster ../990s/cpb-grantees.csv
             --state output/state.json
             --out output/hosted-last-run.json
             --candidates-out output/hosted-candidates.json
@@ -185,7 +187,7 @@ jobs:
             --max-items 200
             --max-item-age-days 30
             --feed-timeout-seconds 8
-            --feed-retries 0
+            --feed-retries 1
             --parallelism 12
           )
           if [ "$DRY_RUN" = "true" ]; then

@@ -3,7 +3,8 @@ from __future__ import annotations
 import argparse
 import json
 import unittest
-from datetime import datetime, timezone
+from dataclasses import replace
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from tempfile import TemporaryDirectory
 from unittest.mock import patch
@@ -56,6 +57,51 @@ def feed_items() -> list[cli.FeedItem]:
 
 
 class StateSafetyTests(unittest.TestCase):
+    def test_overlap_picks_up_late_item_without_resending_seen_item(self) -> None:
+        with TemporaryDirectory() as tmpdir:
+            tmp = Path(tmpdir)
+            args = make_args(tmp, dry_run=True)
+            args.since_last_checked = True
+            args.overlap_hours = 72
+            now = datetime.now(timezone.utc)
+            first = replace(feed_items()[0], published=now - timedelta(hours=10))
+            seen = replace(first, link="https://example.test/seen")
+            (tmp / "state.json").write_text(json.dumps({
+                "last_checked": (now - timedelta(hours=2)).isoformat(), "seen_ids": [seen.link],
+            }), encoding="utf-8")
+            with patch.object(cli, "_fetch_url", return_value="<rss />"), patch.object(
+                cli, "_parse_feed_xml", return_value=[first, seen]
+            ):
+                payload = cli.run(args)
+            self.assertEqual(payload["slack_item_ids"], ["https://example.test/story"])
+
+    def test_persistent_feed_failure_is_reported_and_clears_on_recovery(self) -> None:
+        with TemporaryDirectory() as tmpdir:
+            tmp = Path(tmpdir)
+            args = make_args(tmp, dry_run=False, slack_webhook="https://example.test/webhook")
+            with patch.object(cli, "_fetch_url", return_value="<html />"), patch.object(cli, "post_to_slack") as post:
+                self.assertFalse(cli.run(args)["persistent_feed_failures"])
+                self.assertEqual(len(cli.run(args)["persistent_feed_failures"]), 1)
+            self.assertIn("Failed on consecutive scans: Feed", post.call_args.args[1].text)
+            with patch.object(cli, "_fetch_url", return_value="<rss />"), patch.object(cli, "post_to_slack"):
+                self.assertFalse(cli.run(args)["persistent_feed_failures"])
+            self.assertEqual(json.loads((tmp / "state.json").read_text())["feed_failure_streaks"], {})
+
+    def test_slack_overflow_remains_eligible_for_next_scan(self) -> None:
+        with TemporaryDirectory() as tmpdir:
+            args = make_args(Path(tmpdir), dry_run=False, slack_webhook="https://example.test/webhook")
+            args.slack_max_items = 1
+            items = feed_items()
+            items.append(replace(items[0], link="https://example.test/second",
+                                 published=items[0].published - timedelta(minutes=1)))
+            with patch.object(cli, "_fetch_url", return_value="<rss />"), patch.object(
+                cli, "_parse_feed_xml", return_value=items
+            ), patch.object(cli, "post_to_slack"):
+                first = cli.run(args)["slack_item_ids"]
+                second = cli.run(args)["slack_item_ids"]
+            self.assertEqual(first, ["https://example.test/story"])
+            self.assertEqual(second, ["https://example.test/second"])
+
     def test_additional_opml_feeds_are_combined_and_deduplicated(self) -> None:
         with TemporaryDirectory() as tmpdir:
             tmp = Path(tmpdir)

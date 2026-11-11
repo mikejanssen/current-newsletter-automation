@@ -11,5 +11,8 @@
       <outline text="Caitlin Mohler and Ohio University - Google News" title="Caitlin Mohler and Ohio University - Google News" type="rss" xmlUrl="https://news.google.com/rss/search?q=%22Caitlin%20Mohler%22%20%22Ohio%20University%22&amp;hl=en-US&amp;gl=US&amp;ceid=US:en" htmlUrl="https://news.google.com/search?q=%22Caitlin%20Mohler%22%20%22Ohio%20University%22&amp;hl=en-US&amp;gl=US&amp;ceid=US:en" />
     </outline>
     <outline text="PBS Charlotte and PBS North Carolina - Google News" title="PBS Charlotte and PBS North Carolina - Google News" type="rss" xmlUrl="https://news.google.com/rss/search?q=%28%22PBS%20Charlotte%22%20OR%20WTVI%20OR%20%22PBS%20North%20Carolina%22%29&amp;hl=en-US&amp;gl=US&amp;ceid=US:en" htmlUrl="https://news.google.com/search?q=%28%22PBS%20Charlotte%22%20OR%20WTVI%20OR%20%22PBS%20North%20Carolina%22%29&amp;hl=en-US&amp;gl=US&amp;ceid=US:en" />
+    <outline text="WYSU and WMNF - Google News" title="WYSU and WMNF - Google News" type="rss" xmlUrl="https://news.google.com/rss/search?q=%28WYSU%20OR%20WMNF%29&amp;hl=en-US&amp;gl=US&amp;ceid=US:en" htmlUrl="https://news.google.com/search?q=%28WYSU%20OR%20WMNF%29&amp;hl=en-US&amp;gl=US&amp;ceid=US:en" />
+    <outline text="WMNF" title="WMNF" type="rss" xmlUrl="https://www.wmnf.org/feed/" htmlUrl="https://www.wmnf.org/" />
+    <outline text="Montana Free Press" title="Montana Free Press" type="rss" xmlUrl="https://montanafreepress.org/feed/" htmlUrl="https://montanafreepress.org/" />
   </body>
 </opml>
