@@ -7,6 +7,24 @@ from rss_watch import cli
 
 
 class ScoringTests(unittest.TestCase):
+    def test_pbs_charlotte_departure_from_google_news_is_high_priority(self) -> None:
+        title = "PBS Charlotte leader departs - https://www.thecharlotteledger.com/"
+        score, reasons = cli._score_item(title, title, "news.google.com", None)
+        self.assertGreaterEqual(score, 8)
+        self.assertIn("active-reporting-north-carolina-pbs", reasons)
+
+    def test_pbs_charlotte_combination_is_high_priority(self) -> None:
+        title = "PBS North Carolina and WTVI PBS Charlotte announce agreement to combine organizations"
+        score, reasons = cli._score_item(title, "", "example.test", None)
+        self.assertGreaterEqual(score, 8)
+        self.assertIn("active-reporting-north-carolina-pbs", reasons)
+
+    def test_routine_pbs_charlotte_programming_is_not_promoted(self) -> None:
+        title = "PBS Charlotte announces its fall programming schedule"
+        score, reasons = cli._score_item(title, "", "example.test", None)
+        self.assertLess(score, 5)
+        self.assertNotIn("active-reporting-north-carolina-pbs", reasons)
+
     def test_active_woub_legal_story_is_high_priority(self) -> None:
         score, reasons = cli._score_item(
             "Ohio University is sued in federal court over sexual harassment allegations - WOUB Public Media",

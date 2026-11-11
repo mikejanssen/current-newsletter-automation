@@ -226,6 +226,8 @@ DEPARTURE_TERMS = [
     "step down",
     "stepping down",
     "departure",
+    "departs",
+    "departed",
     "departing",
     "exit",
     "exits",
@@ -740,6 +742,18 @@ def _score_item(title: str, summary: str, domain: str, published: datetime | Non
     elif _has_term(text, "woub") and _has_any_term(text, ACTIVE_REPORTING_WOUB_TERMS):
         score += 8
         reasons.append("active-reporting-woub")
+
+    headline = _headline_core(title)
+    if _has_any_term(headline, ["wtvi", "pbs charlotte", "pbs north carolina", "pbs nc"]):
+        leadership_change = _has_any_term(
+            headline, MANAGEMENT_CHANGE_TERMS + ["leader", "ceo", "chief executive"]
+        ) and _has_any_term(headline, DEPARTURE_TERMS + LEADERSHIP_APPOINTMENT_TERMS)
+        transaction = _has_any_term(
+            headline, OWNERSHIP_DISPOSITION_TERMS + ["acquires", "acquiring", "merger", "merge", "agreement to combine"]
+        )
+        if leadership_change or transaction:
+            score += 9
+            reasons.append("active-reporting-north-carolina-pbs")
 
     # Promote "community radio" only when it appears in headline/title with U.S. station context.
     if _has_term(title_text, "community radio"):
