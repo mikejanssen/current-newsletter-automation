@@ -49,7 +49,7 @@ PYTHONPATH=src python3 -m rss_watch.cli \
 - `--parallelism` default: `8`
 - `--max-feeds` optional cap for quick trial runs
 - `--slack-webhook` default: `SLACK_WEBHOOK_URL` env var
-- `--slack-max-items` default: `10`
+- `--slack-max-items` default: `10`. Use `0` to send all qualifying items in the current scan.
 - `--dry-run` do not update state
 
 ## Tests
@@ -103,8 +103,10 @@ The workflow requires these GitHub Actions secrets:
 
 Hosted scans overlap by 72 hours and use the shared CPB grantee roster to recognize
 station leadership and operating changes. Slack shows feed failure counts on each
-scan and identifies consecutive failures in the morning briefing. Qualifying
-stories beyond the Slack limit remain eligible for a later scan within the lookback.
-The hosted run report records the selected Slack item IDs for coverage audits.
+scan and identifies consecutive failures in the morning briefing. Hosted scans
+send all high- and medium-priority stories immediately, splitting long digests
+into Slack messages as needed. If Slack rejects a later message, the scheduled
+retry can resume without resending stories Slack already accepted. The hosted
+run report records the selected Slack item IDs for coverage audits.
 
 Manual runs default to dry-run mode and upload their briefing and JSON output as a workflow artifact. A successful dry run also seeds the hosted checkpoint when no cache exists, without posting to Slack or advancing an existing checkpoint. Scheduled runs post to Slack and update the hosted state only after a successful post.

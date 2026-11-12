@@ -159,6 +159,7 @@ jobs:
           fi
 
       - name: Run RSS Watch
+        id: scan
         if: steps.delivery.outputs.should_execute == 'true'
         env:
           SLACK_WEBHOOK_URL: ${{ secrets.RSS_WATCH_SLACK_WEBHOOK_URL }}
@@ -185,6 +186,7 @@ jobs:
             --candidates-out output/hosted-candidates.json
             --brief output/hosted-briefing.md
             --max-items 200
+            --slack-max-items 0
             --max-item-age-days 30
             --feed-timeout-seconds 8
             --feed-retries 1
@@ -197,9 +199,13 @@ jobs:
           if [ "$DRY_RUN" != "true" ]; then
             python - <<'PY'
           import json
+          import os
           from pathlib import Path
 
           payload = json.loads(Path("output/hosted-last-run.json").read_text(encoding="utf-8"))
+          if payload.get("slack_status") == "partial" and payload.get("state_updated"):
+              with open(os.environ["GITHUB_OUTPUT"], "a", encoding="utf-8") as output:
+                  output.write("partial_delivery=true\n")
           if payload.get("slack_status") != "sent" or not payload.get("state_updated"):
               raise SystemExit("RSS Watch did not complete Slack delivery and state update")
           PY
@@ -236,7 +242,7 @@ jobs:
           PY
 
       - name: Save hosted de-duplication state
-        if: steps.delivery.outputs.should_execute == 'true' && success()
+        if: steps.delivery.outputs.should_execute == 'true' && !cancelled() && (success() || steps.scan.outputs.partial_delivery == 'true')
         uses: actions/cache/save@v5
         with:
           path: |

@@ -8,8 +8,9 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from tempfile import TemporaryDirectory
 from unittest.mock import patch
+from urllib.error import HTTPError
 
-from rss_watch import cli
+from rss_watch import cli, slack
 from rss_watch.slack import SlackPostError
 
 
@@ -57,6 +58,52 @@ def feed_items() -> list[cli.FeedItem]:
 
 
 class StateSafetyTests(unittest.TestCase):
+    def test_unlimited_slack_batches_cover_items_beyond_report_limit(self) -> None:
+        with TemporaryDirectory() as tmpdir:
+            args = make_args(Path(tmpdir), dry_run=False, slack_webhook="https://example.test/webhook")
+            args.slack_max_items = 0
+            args.max_items = 2
+            item = feed_items()[0]
+            items = [replace(item, link=f"https://example.test/{index}/" + "a" * 450) for index in range(12)]
+            with patch.object(cli, "_fetch_url", return_value="<rss />"), patch.object(
+                cli, "_parse_feed_xml", return_value=items
+            ), patch.object(cli, "post_to_slack") as post, patch.object(cli.time, "sleep"):
+                report = cli.run(args)
+            self.assertEqual(len(report["items"]), 2)
+            self.assertEqual(set(report["slack_item_ids"]), {item.link for item in items})
+            self.assertGreater(post.call_count, 1)
+            self.assertTrue(all(len(call.args[1].text) <= cli.SLACK_BATCH_CHARS for call in post.call_args_list))
+
+    def test_failed_second_batch_retries_only_unsent_stories(self) -> None:
+        with TemporaryDirectory() as tmpdir:
+            args = make_args(Path(tmpdir), dry_run=False, slack_webhook="https://example.test/webhook")
+            args.slack_max_items = 0
+            item = feed_items()[0]
+            items = [replace(item, link=f"https://example.test/{index}/" + "a" * 450) for index in range(12)]
+            with patch.object(cli, "_fetch_url", return_value="<rss />"), patch.object(
+                cli, "_parse_feed_xml", return_value=items
+            ), patch.object(cli.time, "sleep"):
+                with patch.object(cli, "post_to_slack", side_effect=[None, SlackPostError("unavailable")]):
+                    first = cli.run(args)
+                checkpoint = json.loads(Path(args.state).read_text())
+                self.assertIsNone(checkpoint["last_checked"])
+                with patch.object(cli, "post_to_slack"):
+                    retry = cli.run(args)
+            self.assertEqual(first["slack_status"], "partial")
+            self.assertTrue(first["slack_item_ids"])
+            self.assertFalse(set(first["slack_item_ids"]) & set(retry["slack_item_ids"]))
+            self.assertEqual(set(first["slack_item_ids"] + retry["slack_item_ids"]), {item.link for item in items})
+
+    def test_slack_retries_rate_limit_after_requested_delay(self) -> None:
+        url = "https://example.test/webhook"
+        rate_limit = HTTPError(url, 429, "Too Many Requests", {"Retry-After": "2"}, None)
+        with patch.object(slack, "urlopen") as request, patch.object(slack.time, "sleep") as sleep:
+            response = request.return_value
+            request.side_effect = [rate_limit, response]
+            slack.post_to_slack(url, slack.SlackMessage("example"))
+        self.assertEqual(request.call_count, 2)
+        sleep.assert_called_once_with(2)
+
     def test_overlap_picks_up_late_item_without_resending_seen_item(self) -> None:
         with TemporaryDirectory() as tmpdir:
             tmp = Path(tmpdir)

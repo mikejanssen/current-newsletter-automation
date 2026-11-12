@@ -24,6 +24,7 @@ from .slack import post_to_slack, SlackMessage, SlackPostError
 
 
 USER_AGENT = "Mozilla/5.0 (compatible; CurrentRSSWatch/1.0; +https://current.org)"
+SLACK_BATCH_CHARS = 3900
 TRACKING_QUERY_KEYS = {
     "utm_source",
     "utm_medium",
@@ -1149,36 +1150,53 @@ def _render_briefing(
     return "\n".join(lines).rstrip() + "\n"
 
 
-def _slack_items(items: list[RankedItem], limit: int) -> list[RankedItem]:
-    return [item for item in items if item.bucket in {"high", "maybe"}][:limit]
-
-
-def _render_slack_text(mode: str, counts: dict[str, int], items: list[RankedItem], failures: list[dict[str, str]], max_items: int,
-                       failure_streaks: dict[str, int] | None = None) -> str:
-    lines = [f"RSS Watch — {datetime.now(timezone.utc):%Y-%m-%d} ({mode})"]
-
-    selected = _slack_items(items, max_items)
-    if selected:
-        lines.append("")
-        lines.append("Top items")
-        for item in selected:
-            lines.append(f"- <{item.link}|{item.title}> ({item.domain})")
-    else:
-        lines.append("")
-        lines.append("No high/maybe items in this run.")
-
-    overflow = counts["high"] + counts["maybe"] - len(selected)
-    if overflow > 0:
-        lines.append(f"{overflow} more qualifying items stayed eligible for a later digest.")
-
+def _slack_batches(
+    mode: str, items: list[RankedItem], failures: list[dict[str, str]], max_items: int,
+    failure_streaks: dict[str, int],
+) -> list[tuple[str, list[str]]]:
+    heading = f"RSS Watch — {datetime.now(timezone.utc):%Y-%m-%d} ({mode})"
+    eligible = [item for item in items if item.bucket in {"high", "maybe"}]
+    selected = eligible[:max_items] if max_items > 0 else eligible
+    lines = [heading, ""]
     if failures:
         persistent = sorted({failure["feed"] for failure in failures
-                             if (failure_streaks or {}).get(failure["url"], 0) >= 2})
-        lines.extend(["", f"Feed checks failed for {len(failures)} sources."])
+                             if failure_streaks.get(failure["url"], 0) >= 2})
+        lines.append(f"Feed checks failed for {len(failures)} sources.")
         if persistent and mode == "morning":
-            lines.append("Failed on consecutive scans: " + ", ".join(persistent))
+            names = ", ".join(persistent)
+            lines.append("Failed on consecutive scans: " + (names if len(names) <= 1000 else names[:999] + "…"))
+        lines.append("")
+    if not selected:
+        lines.append("No high/maybe items in this run.")
+        return [("\n".join(lines), [])]
+    if len(eligible) > len(selected):
+        lines.append(f"{len(eligible) - len(selected)} more qualifying items stayed eligible for a later digest.")
+        lines.append("")
+    lines.append("Top items")
 
-    return "\n".join(lines)
+    batches = []
+    item_ids = []
+    length = len("\n".join(lines))
+    continuation = f"{heading} · continued"
+    for item in selected:
+        title = " ".join(item.title.split()).replace("|", "·")
+        if len(title) > 350:
+            title = title[:349] + "…"
+        title = html.escape(title, quote=False)
+        link = html.escape(item.link, quote=False)
+        line = f"- <{link}|{title}> ({item.domain})"
+        if len(line) + len(continuation) + 1 > SLACK_BATCH_CHARS:
+            line = f"- {title} ({item.domain})"
+        if length + len(line) + 1 > SLACK_BATCH_CHARS:
+            batches.append(("\n".join(lines), item_ids))
+            lines = [continuation, ""]
+            item_ids = []
+            length = len(continuation) + 1
+        lines.append(line)
+        item_ids.append(item.item_id)
+        length += len(line) + 1
+    batches.append(("\n".join(lines), item_ids))
+    return batches
 
 
 def run(args: argparse.Namespace) -> dict:
@@ -1238,7 +1256,8 @@ def run(args: argparse.Namespace) -> dict:
         station_names=station_names,
     )
 
-    slack_item_ids = [item.item_id for item in _slack_items(ranked, args.slack_max_items)]
+    slack_batches = _slack_batches(args.mode, all_ranked, failures, args.slack_max_items, failure_streaks)
+    slack_item_ids = [item_id for _, item_ids in slack_batches for item_id in item_ids]
     payload = {
         "mode": args.mode,
         "window_start_utc": since.isoformat(),
@@ -1249,6 +1268,7 @@ def run(args: argparse.Namespace) -> dict:
         "counts": counts,
         "items": [asdict(item) for item in ranked],
         "slack_item_ids": slack_item_ids,
+        "slack_message_count": len(slack_batches),
         "slack_status": "not_attempted",
         "slack_error": "",
         "state_updated": False,
@@ -1283,20 +1303,30 @@ def run(args: argparse.Namespace) -> dict:
         return payload
 
     if args.slack_webhook:
-        slack_text = _render_slack_text(args.mode, counts, ranked, failures, args.slack_max_items, failure_streaks)
-        try:
-            post_to_slack(args.slack_webhook, SlackMessage(text=slack_text))
-        except SlackPostError as err:
-            payload["slack_status"] = "failed"
-            payload["slack_error"] = str(err)
-            out_path.write_text(json.dumps(payload, indent=2, sort_keys=True), encoding="utf-8")
-            print(f"rss-watch: Slack post failed: {err}")
-            return payload
+        posted_ids = []
+        for index, (slack_text, item_ids) in enumerate(slack_batches):
+            if index:
+                time.sleep(1)
+            try:
+                post_to_slack(args.slack_webhook, SlackMessage(text=slack_text))
+            except SlackPostError as err:
+                payload["slack_status"] = "partial" if index else "failed"
+                payload["slack_error"] = str(err)
+                payload["slack_item_ids"] = posted_ids
+                payload["slack_message_count"] = index
+                if posted_ids:
+                    state.seen_ids.extend(posted_ids)
+                    save_state(state_path, state)
+                    payload["state_updated"] = True
+                out_path.write_text(json.dumps(payload, indent=2, sort_keys=True), encoding="utf-8")
+                print(f"rss-watch: Slack post failed: {err}")
+                return payload
+            posted_ids.extend(item_ids)
         payload["slack_status"] = "sent"
 
-    delivered_ids = set(slack_item_ids)
-    state.seen_ids.extend(item.item_id for item in ranked
-                          if not args.slack_webhook or item.bucket == "low" or item.item_id in delivered_ids)
+    state.seen_ids.extend(item.item_id for item in ranked if not args.slack_webhook or item.bucket == "low")
+    if args.slack_webhook:
+        state.seen_ids.extend(slack_item_ids)
     state.seen_ids = state.seen_ids[-8000:]
     state.last_checked = now
     state.feed_failure_streaks = failure_streaks
@@ -1343,7 +1373,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--parallelism", type=int, default=int(os.environ.get("RSS_WATCH_PARALLELISM", "8")))
     parser.add_argument("--max-feeds", type=int, help="Optional cap for feed fetches (first N feeds in OPML)")
     parser.add_argument("--slack-webhook", default=os.environ.get("SLACK_WEBHOOK_URL"))
-    parser.add_argument("--slack-max-items", type=int, default=10)
+    parser.add_argument("--slack-max-items", type=int, default=10, help="Maximum Slack items per scan (0 sends all qualifying items)")
     parser.add_argument("--dry-run", action="store_true")
     return parser
 
