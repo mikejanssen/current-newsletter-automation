@@ -441,6 +441,17 @@ LOW_SIGNAL_DOMAINS = {
     "x.com",
     "www.x.com",
 }
+SOCIAL_PUBLISHERS = {
+    "facebook": "facebook.com",
+    "instagram": "instagram.com",
+    "linkedin": "linkedin.com",
+    "threads": "threads.net",
+    "tiktok": "tiktok.com",
+    "twitter": "twitter.com",
+    "x": "x.com",
+    "youtube": "youtube.com",
+}
+LOW_SIGNAL_DOMAINS.update(SOCIAL_PUBLISHERS.values())
 
 SUPPRESSED_DOMAINS = {
     "current.org",
@@ -619,17 +630,6 @@ def _matches_station(text: str, names: frozenset[str]) -> bool:
         if match[0] in names:
             return True
     return _has_any_term(text.lower(), (name for name in names if not name.isupper()))
-
-
-def _has_substantive_public_media_signal(text: str) -> bool:
-    return _has_any_term(
-        text,
-        CORE_KEYWORDS[:4]
-        + WEAK_BRAND_KEYWORDS
-        + CRITICAL_TERMS
-        + PUBLIC_MEDIA_POLICY_TERMS
-        + ["station", "newsroom"],
-    )
 
 
 def _is_public_media_commentary(text: str) -> bool:
@@ -958,9 +958,28 @@ def _source_hint_domain_from_title(title: str) -> str | None:
     if " - " not in title:
         return None
     tail = title.rsplit(" - ", 1)[-1].strip().lower()
+    if tail in SOCIAL_PUBLISHERS:
+        return SOCIAL_PUBLISHERS[tail]
     if re.fullmatch(r"[a-z0-9.-]+\.[a-z]{2,}", tail):
         return tail
     return None
+
+
+def _is_job_listing(title: str, url: str, summary: str) -> bool:
+    parsed = urllib.parse.urlsplit(url)
+    if _canonical_domain(parsed.netloc) in {"publicmedia.careers", "jobs.current.org"}:
+        return True
+    headline = _headline_core(title)
+    if _has_any_term(headline, (
+        "job opening", "job openings", "job opportunity", "job opportunities", "job posting",
+        "job vacancy", "now hiring", "apply for this job",
+        "we are hiring", "we're hiring", "employment vacancy", "career opportunity",
+    )) or re.search(r"\b(?:jobs? at|help wanted|position available|vacancy)\s*:", headline):
+        return True
+    description = _plain_text(summary).lower()
+    return _has_any_term(description, ("apply for this job", "submit your application")) and _has_any_term(
+        description, ("qualifications", "cover letter", "job description", "job duties"),
+    )
 
 
 def _canonical_domain(domain: str) -> str:
@@ -996,7 +1015,7 @@ def dedupe_and_rank(
             continue
         normalized_link = _normalize_url(raw.link)
         domain = urllib.parse.urlsplit(normalized_link or raw.link).netloc.lower()
-        if _canonical_domain(domain) in SUPPRESSED_DOMAINS:
+        if _canonical_domain(domain) in SUPPRESSED_DOMAINS or _is_job_listing(raw.title, normalized_link, raw.summary):
             continue
         source_hint_domain = _source_hint_domain_from_title(raw.title)
         fp = _title_fingerprint(raw.title)
@@ -1010,16 +1029,17 @@ def dedupe_and_rank(
 
         score, reasons = _score_item(raw.title, raw.summary, domain, published, station_names)
         text = _plain_text(f"{raw.title} {raw.summary}").lower()
-        if source_hint_domain in LOW_SIGNAL_DOMAINS:
-            if _is_public_media_commentary(text):
-                score -= 1
-                reasons.append(f"social-source-commentary:{source_hint_domain}")
-            elif not _has_substantive_public_media_signal(text):
-                score -= 5
-                reasons.append(f"weak-social-source:{source_hint_domain}")
-            else:
+        social_source = _canonical_domain(source_hint_domain or domain)
+        if social_source in LOW_SIGNAL_DOMAINS:
+            if "public-station-operations" in reasons or "active-reporting-north-carolina-pbs" in reasons:
                 score -= 3
-                reasons.append(f"social-source:{source_hint_domain}")
+                reasons.append(f"social-station-update:{social_source}")
+            elif re.match(r"^(?:commentary|opinion|analysis|editorial)\s*:", _headline_core(raw.title)) and _is_public_media_commentary(text):
+                score -= 1
+                reasons.append(f"social-source-commentary:{social_source}")
+            else:
+                score = min(4, score)
+                reasons.append(f"social-post-needs-corroboration:{social_source}")
         bucket = _bucket_for_score(score)
         entry = dedup.get(dedupe_key)
         if entry is None:
@@ -1150,6 +1170,78 @@ def _render_briefing(
     return "\n".join(lines).rstrip() + "\n"
 
 
+STORY_STOPWORDS = STOPWORDS | {
+    "about", "after", "against", "and", "announces", "as", "by", "its", "new",
+    "on", "one", "over", "says", "that", "their", "this", "to", "was", "will",
+}
+STORY_WORDS = {
+    "appoints": "appoint", "appointed": "appoint", "appointment": "appoint",
+    "hires": "appoint", "hired": "appoint", "joins": "appoint", "names": "appoint", "named": "appoint",
+    "workers": "worker", "strikes": "strike", "striking": "strike",
+    "merges": "merger", "merge": "merger", "acquisition": "merger",
+    "financing": "funding", "funds": "funding",
+}
+STORY_MILESTONES = (
+    ("proposed", "proposal", "plans to", "considering"),
+    ("filed", "files", "filing"),
+    ("approved", "approves", "clears"),
+    ("finalized", "finalizes", "completes", "completed", "closes", "closed"),
+    ("blocked", "blocks", "rejects", "rejected"),
+    ("lawsuit", "sues", "sued"),
+    ("strike ends", "ends strike", "reaches agreement", "reached agreement"),
+)
+StorySignature = tuple[frozenset[str], frozenset[int], frozenset[str]]
+
+
+def _story_signature(title: str) -> StorySignature:
+    headline = _headline_core(title).replace("public television and radio", "public media")
+    words = re.findall(r"[a-z0-9]+", headline)
+    tokens = frozenset(STORY_WORDS.get(word, word) for word in words if word not in STORY_STOPWORDS)
+    milestones = frozenset(index for index, terms in enumerate(STORY_MILESTONES) if _has_any_term(headline, terms))
+    numbers = frozenset(re.findall(r"\b\d+(?:\.\d+)?\s*(?:million|billion|percent|%)", headline))
+    return tokens, milestones, numbers
+
+
+def _same_story(left: StorySignature, right: StorySignature) -> bool:
+    left_words, left_milestones, left_numbers = left
+    right_words, right_milestones, right_numbers = right
+    if left_milestones != right_milestones or (left_numbers and right_numbers and left_numbers != right_numbers):
+        return False
+    shared = len(left_words & right_words)
+    return shared >= 4 and (
+        shared / len(left_words | right_words) >= 0.55
+        or (shared >= 5 and shared / min(len(left_words), len(right_words)) >= 0.85)
+    )
+
+
+def _slack_story_selection(items: list[RankedItem], recent_titles: Iterable[str]) -> tuple[list[RankedItem], int]:
+    previous = [_story_signature(title) for title in recent_titles]
+    selected = []
+    signatures = []
+    duplicates = 0
+    for item in items:
+        if item.bucket not in {"high", "maybe"}:
+            continue
+        signature = _story_signature(item.title)
+        if any(_same_story(signature, existing) for existing in previous):
+            duplicates += 1
+            continue
+        match = next((i for i, existing in enumerate(signatures) if _same_story(signature, existing)), None)
+        if match is None:
+            selected.append(item)
+            signatures.append(signature)
+            continue
+        duplicates += 1
+        chosen = selected[match]
+        current_source = _canonical_domain(item.source_hint_domain or item.domain)
+        chosen_source = _canonical_domain(chosen.source_hint_domain or chosen.domain)
+        current_is_direct = _canonical_domain(item.domain) != "news.google.com" and current_source not in LOW_SIGNAL_DOMAINS
+        chosen_is_weak = _canonical_domain(chosen.domain) == "news.google.com" or chosen_source in LOW_SIGNAL_DOMAINS
+        if current_is_direct and chosen_is_weak:
+            selected[match] = item
+    return selected, duplicates
+
+
 def _slack_batches(
     mode: str, items: list[RankedItem], failures: list[dict[str, str]], max_items: int,
     failure_streaks: dict[str, int],
@@ -1256,7 +1348,11 @@ def run(args: argparse.Namespace) -> dict:
         station_names=station_names,
     )
 
-    slack_batches = _slack_batches(args.mode, all_ranked, failures, args.slack_max_items, failure_streaks)
+    recent_cutoff = (now - timedelta(hours=72)).isoformat()
+    recent_titles = {title: sent for title, sent in state.slack_story_titles.items() if sent >= recent_cutoff}
+    slack_stories, duplicate_story_count = _slack_story_selection(all_ranked, recent_titles)
+    slack_batches = _slack_batches(args.mode, slack_stories, failures, args.slack_max_items, failure_streaks)
+    slack_titles_by_id = {item.item_id: item.title for item in slack_stories}
     slack_item_ids = [item_id for _, item_ids in slack_batches for item_id in item_ids]
     payload = {
         "mode": args.mode,
@@ -1269,6 +1365,7 @@ def run(args: argparse.Namespace) -> dict:
         "items": [asdict(item) for item in ranked],
         "slack_item_ids": slack_item_ids,
         "slack_message_count": len(slack_batches),
+        "slack_duplicate_story_count": duplicate_story_count,
         "slack_status": "not_attempted",
         "slack_error": "",
         "state_updated": False,
@@ -1316,6 +1413,8 @@ def run(args: argparse.Namespace) -> dict:
                 payload["slack_message_count"] = index
                 if posted_ids:
                     state.seen_ids.extend(posted_ids)
+                    recent_titles.update({slack_titles_by_id[item_id]: now.isoformat() for item_id in posted_ids})
+                    state.slack_story_titles = recent_titles
                     save_state(state_path, state)
                     payload["state_updated"] = True
                 out_path.write_text(json.dumps(payload, indent=2, sort_keys=True), encoding="utf-8")
@@ -1327,6 +1426,8 @@ def run(args: argparse.Namespace) -> dict:
     state.seen_ids.extend(item.item_id for item in ranked if not args.slack_webhook or item.bucket == "low")
     if args.slack_webhook:
         state.seen_ids.extend(slack_item_ids)
+        recent_titles.update({slack_titles_by_id[item_id]: now.isoformat() for item_id in slack_item_ids})
+        state.slack_story_titles = recent_titles
     state.seen_ids = state.seen_ids[-8000:]
     state.last_checked = now
     state.feed_failure_streaks = failure_streaks

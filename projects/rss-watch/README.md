@@ -109,4 +109,9 @@ into Slack messages as needed. If Slack rejects a later message, the scheduled
 retry can resume without resending stories Slack already accepted. The hosted
 run report records the selected Slack item IDs for coverage audits.
 
+Job listings are filtered before ranking. Slack groups closely matching headlines
+across outlets and checks them against the past 72 hours of delivered headlines.
+Changes in the status of a transaction can still qualify as separate stories.
+Social posts with insufficient evidence of a news development remain low priority.
+
 Manual runs default to dry-run mode and upload their briefing and JSON output as a workflow artifact. A successful dry run also seeds the hosted checkpoint when no cache exists, without posting to Slack or advancing an existing checkpoint. Scheduled runs post to Slack and update the hosted state only after a successful post.

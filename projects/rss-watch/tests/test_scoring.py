@@ -7,6 +7,45 @@ from rss_watch import cli
 
 
 class ScoringTests(unittest.TestCase):
+    def test_job_ads_and_recycled_social_post_stay_out_of_slack(self) -> None:
+        now = datetime.now(timezone.utc)
+        items = [
+            cli.FeedItem("Jobs", "Vice President, Distribution & New Revenue at The WNET Group",
+                         "https://publicmedia.careers/companies/wnet/jobs/1", "", now),
+            cli.FeedItem("Google News", "WMNF now hiring a general manager - WMNF",
+                         "https://news.google.com/rss/articles/job", "", now),
+            cli.FeedItem("Google News", "GREAT NEWS FOR NEWS! After an exceptionally tough year for public media, "
+                         "Connie Ballmer donated $80 million to support NPR's future. - Instagram",
+                         "https://news.google.com/rss/articles/ballmer", "", now),
+            cli.FeedItem("WMNF", "WMNF welcomes Alex Worthey as new general manager",
+                         "https://wmnf.org/worthey", "", now),
+        ]
+        _, candidates, _ = cli.dedupe_and_rank(
+            items, now - timedelta(hours=1), True, set(), 10, 30, frozenset({"WMNF"}),
+        )
+        selected, _ = cli._slack_story_selection(candidates, [])
+        self.assertEqual([item.link for item in selected], ["https://wmnf.org/worthey"])
+        self.assertEqual(len(candidates), 2)
+        self.assertEqual(candidates[1].source_hint_domain, "instagram.com")
+
+    def test_same_story_variants_are_grouped_but_fcc_approval_is_separate(self) -> None:
+        now = datetime.now(timezone.utc)
+        items = [
+            cli.FeedItem("Google News", "Czech public media workers strike against government funding overhaul plan - European Interest",
+                         "https://news.google.com/rss/articles/strike", "", now),
+            cli.FeedItem("Outlet", "Czech public television and radio workers go on strike over government funding overhaul",
+                         "https://example.org/strike", "", now),
+        ]
+        _, candidates, _ = cli.dedupe_and_rank(items, now - timedelta(hours=1), True, set(), 10, 30)
+        selected, duplicates = cli._slack_story_selection(candidates, [])
+        self.assertEqual(duplicates, 1)
+        self.assertEqual([item.link for item in selected], ["https://example.org/strike"])
+        self.assertEqual(cli._slack_story_selection(candidates, [selected[0].title]), ([], 2))
+        self.assertFalse(cli._same_story(
+            cli._story_signature("PBS North Carolina proposes acquiring WTVI license"),
+            cli._story_signature("FCC approves PBS North Carolina acquisition of WTVI license"),
+        ))
+
     def test_station_roster_promotes_known_local_operational_news(self) -> None:
         stations = frozenset({"WYSU", "WMNF", "wisconsin public radio"})
         for title in (

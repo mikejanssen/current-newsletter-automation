@@ -64,7 +64,8 @@ class StateSafetyTests(unittest.TestCase):
             args.slack_max_items = 0
             args.max_items = 2
             item = feed_items()[0]
-            items = [replace(item, link=f"https://example.test/{index}/" + "a" * 450) for index in range(12)]
+            items = [replace(item, title=f"Public radio station receives {index + 1} million in federal funding",
+                             link=f"https://example.test/{index}/" + "a" * 450) for index in range(12)]
             with patch.object(cli, "_fetch_url", return_value="<rss />"), patch.object(
                 cli, "_parse_feed_xml", return_value=items
             ), patch.object(cli, "post_to_slack") as post, patch.object(cli.time, "sleep"):
@@ -79,7 +80,8 @@ class StateSafetyTests(unittest.TestCase):
             args = make_args(Path(tmpdir), dry_run=False, slack_webhook="https://example.test/webhook")
             args.slack_max_items = 0
             item = feed_items()[0]
-            items = [replace(item, link=f"https://example.test/{index}/" + "a" * 450) for index in range(12)]
+            items = [replace(item, title=f"Public radio station receives {index + 1} million in federal funding",
+                             link=f"https://example.test/{index}/" + "a" * 450) for index in range(12)]
             with patch.object(cli, "_fetch_url", return_value="<rss />"), patch.object(
                 cli, "_parse_feed_xml", return_value=items
             ), patch.object(cli.time, "sleep"):
@@ -139,7 +141,8 @@ class StateSafetyTests(unittest.TestCase):
             args = make_args(Path(tmpdir), dry_run=False, slack_webhook="https://example.test/webhook")
             args.slack_max_items = 1
             items = feed_items()
-            items.append(replace(items[0], link="https://example.test/second",
+            items.append(replace(items[0], title="Public television network faces funding shortfall",
+                                 summary="", link="https://example.test/second",
                                  published=items[0].published - timedelta(minutes=1)))
             with patch.object(cli, "_fetch_url", return_value="<rss />"), patch.object(
                 cli, "_parse_feed_xml", return_value=items
